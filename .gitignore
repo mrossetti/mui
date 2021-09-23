@@ -1,9 +1,9 @@
+/local
 /target
 crates/*/target
-**/*.rs.bk
+/benches/target
 Cargo.lock
 .cargo/config
 .cargo/config.toml
-/.idea
+**/*.rs.bk
 /.vscode
-/benches/target

@@ -3,7 +3,6 @@ use mui::prelude::*;
 
 fn main() {
     use std::sync::Arc;
-    use std::f32::consts::PI;
 
     let mut app = App::default();
 
@@ -26,9 +25,7 @@ fn main() {
             pen.viewport_size = vp_size;
 
             pen.clear();
-            pen
-                .fill(Color::RED)
-                .irect_rot(Rect::from_xywh(200.0, 150.0, 400.0, 300.0), Rot2::from_center(45.0 / 180.0 * PI));
+            pen.fill_rect(Rect::from_xywh(200.0, 150.0, 400.0, 300.0), Color::RED);
             
             pen.bind_to_draw_op();
             pen.draw_op.clone()

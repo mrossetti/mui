@@ -38,6 +38,7 @@ pub mod core {
     }
 
     pub mod math {
+        use std::f32::consts::PI;
         use std::ops::{
             Neg,
             Add, AddAssign,
@@ -821,6 +822,8 @@ pub mod core {
         }
 
         impl Rot2 {
+            pub const DEG_TO_RAD: f32 = PI / 180.0;
+            pub const RAD_TO_DEG: f32 = 180.0 / PI;
 
             #[inline]
             pub fn new(pivot: Vec2, angle: f32) -> Self {
@@ -1932,143 +1935,62 @@ pub mod auxil {
         use crate::core::math::{Vec2, vec2, Rect, Rot2};
         use crate::core::color::Color;
         use crate::core::draw::{DrawOp, Vertex, UniformBlock, prefabs::{Vertex4fx2, Sampler2d}};
+        use macros::*;
 
-        #[macro_use]
-        macro_rules! vquad {
-            // fill quad (no outline)
-            ($vertices:ident, $ndc_quad:expr, $rgba:ident) => {
-                let [a, b, c, d] = $ndc_quad;
+        pub mod macros {
 
-                $vertices.push(Vertex4fx2([[a.x, a.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[d.x, d.y, 0.0, 0.0], $rgba]));
+            #[macro_export]
+            macro_rules! push_vertices_xy {
+                ($vertices:ident, $xys:expr, $rgba:ident) => {{
+                    for xy in $xys {
+                        $vertices.push(Vertex4fx2([[xy.x, xy.y, 0.0, 0.0], $rgba]));
+                    }
+                }};
+            }
+
+            #[macro_export]
+            macro_rules! push_indices {
+                ($indices:ident, $start_index:expr, $num:expr) => {{
+                    for i in start_index as u16 .. start_index as u16 + num as u16 {
+                        indices.push(i);
+                    }
+                }};
+            }
+
+            #[macro_export]
+            macro_rules! push_indices_quad {
+                ($indices:ident, $start_index:expr) => {{
+                    let vtx = $start_index as u16;
+
+                    $indices.push(vtx);
+                    $indices.push(vtx + 1);
+                    $indices.push(vtx + 2);
+                    
+                    $indices.push(vtx + 1);
+                    $indices.push(vtx + 2);
+                    $indices.push(vtx + 3);
+                }};
+            }
+
+            pub use {
+                push_vertices_xy,
+                push_indices, push_indices_quad,
             };
-            // stroke quad (outline thickness)
-            ($vertices:ident, $ndc_quad:expr, $rgba:ident, $ndc_thick:ident) => {
-                let [a, b, c, d] = $ndc_quad;
-                let kx = (b - a).normalize() * $ndc_thick.x;
-                let ky = (d - c).normalize() * $ndc_thick.y;
-
-                vquad!($vertices, [a, a + kx, c, c + kx], $rgba);
-                vquad!($vertices, [a + kx, b - kx, a + kx - ky, b - kx + ky], $rgba);
-                vquad!($vertices, [b - kx, b, d - kx, d], $rgba);
-                vquad!($vertices, [c + kx + ky, d - kx + ky, c + kx, d - kx], $rgba);
-            };
-        }
-
-        #[macro_use]
-        macro_rules! vquad_tex {
-            // fill quad textured (no outline)
-            ($vertices:ident, $ndc_quad:expr, $rgba:ident) => {
-                let ([a, b, c, d], [uv_a, uv_b, uv_c, uv_d]) = $ndc_quad;
-
-                $vertices.push(Vertex4fx2([[a.x, a.y, uv_a.x, uv_a.y], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, uv_b.x, uv_b.y], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, uv_c.x, uv_c.y], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, uv_b.x, uv_b.y], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, uv_c.x, uv_c.y], $rgba]));
-                $vertices.push(Vertex4fx2([[d.x, d.y, uv_d.x, uv_d.y], $rgba]));
-            };
-        }
-
-        #[macro_use]
-        macro_rules! iquad {
-            // fill quad indexed (no outline)
-            ($vertices:ident, $indices:ident, $ndc_quad:expr, $rgba:ident) => {
-                let vtx = $vertices.len() as u16;
-                let [a, b, c, d] = $ndc_quad;
-
-                $vertices.push(Vertex4fx2([[a.x, a.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[d.x, d.y, 0.0, 0.0], $rgba]));
-
-                $indices.push(vtx + 0); $indices.push(vtx + 1); $indices.push(vtx + 2);
-                $indices.push(vtx + 1); $indices.push(vtx + 2); $indices.push(vtx + 3);
-            };
-            // stroke quad indexed (outline thickness)
-            ($vertices:ident, $indices:ident, $ndc_quad:expr, $rgba:ident, $ndc_thick:ident) => {
-                let vtx = $vertices.len() as u16;
-                let [v00, v01, v02, v03] = $ndc_quad;
-
-                let kx = (v01 - v00).normalize() * $ndc_thick.x;
-                let ky = (v03 - v02).normalize() * $ndc_thick.y;
-
-                let v04 = v00 + kx; let v08 = v04 - ky;
-                let v05 = v01 - kx; let v09 = v05 - ky;
-                let v06 = v02 + kx; let v10 = v06 + ky;
-                let v07 = v03 - kx; let v11 = v07 + ky;
-
-                $vertices.push(Vertex4fx2([[v00.x, v00.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v01.x, v01.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v02.x, v02.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v03.x, v03.y, 0.0, 0.0], $rgba]));
-                
-                $vertices.push(Vertex4fx2([[v04.x, v04.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v05.x, v05.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v06.x, v06.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v07.x, v07.y, 0.0, 0.0], $rgba]));
-
-                $vertices.push(Vertex4fx2([[v08.x, v08.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v09.x, v09.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v10.x, v10.y, 0.0, 0.0], $rgba]));
-                $vertices.push(Vertex4fx2([[v11.x, v11.y, 0.0, 0.0], $rgba]));
-
-                $indices.push(vtx + 0); $indices.push(vtx + 4); $indices.push(vtx + 2);
-                $indices.push(vtx + 4); $indices.push(vtx + 2); $indices.push(vtx + 6);
-
-                $indices.push(vtx + 4); $indices.push(vtx + 5); $indices.push(vtx + 8);
-                $indices.push(vtx + 5); $indices.push(vtx + 8); $indices.push(vtx + 9);
-
-                $indices.push(vtx + 5); $indices.push(vtx + 1); $indices.push(vtx + 7);
-                $indices.push(vtx + 1); $indices.push(vtx + 7); $indices.push(vtx + 3);
-
-                $indices.push(vtx +10); $indices.push(vtx +11); $indices.push(vtx + 6);
-                $indices.push(vtx +11); $indices.push(vtx + 6); $indices.push(vtx + 7);
-            };
-        }
-
-        #[macro_use]
-        macro_rules! iquad_tex {
-            // fill quad indexed textured (no outline)
-            ($vertices:ident, $indices:ident, $ndc_quad:expr, $rgba:ident) => {
-                let vtx = $vertices.len() as u16;
-                let ([a, b, c, d], [uv_a, uv_b, uv_c, uv_d]) = $ndc_quad;
-
-                $vertices.push(Vertex4fx2([[a.x, a.y, uv_a.x, uv_a.y], $rgba]));
-                $vertices.push(Vertex4fx2([[b.x, b.y, uv_b.x, uv_b.y], $rgba]));
-                $vertices.push(Vertex4fx2([[c.x, c.y, uv_c.x, uv_c.y], $rgba]));
-                $vertices.push(Vertex4fx2([[d.x, d.y, uv_d.x, uv_d.y], $rgba]));
-
-                $indices.push(vtx + 0); $indices.push(vtx + 1); $indices.push(vtx + 2);
-                $indices.push(vtx + 1); $indices.push(vtx + 2); $indices.push(vtx + 3);
-            };
-        }
-
-        // TODO: Stateful Stroke(color, thick), Fill and transform parameters
-        // and api to add primitives with minimal parameters (e.g. rect, ellipse, circle, arc, regular poly, line path, rounded_rect, textured_quad, text)
-
-        #[derive(Debug, Clone, Copy)]
-        pub enum PenMode {
-            Fill(Color),
-            Stroke(Color, Vec2),
         }
         
+        /// [`Pen2d`] opinionistic attempt at batched primitive drawing.
         pub struct Pen2d {
             /// `draw_op` to be issued (contains the gpu buffers as well as the pipeline spec).
             /// The bound texture is also assumed to have a white pixel at the very topleft.
             pub draw_op: DrawOp,
-            /// `mode` to control whether api calls should outline the shape with a stroke color and thickness or simply fill it with a fill color.
-            pub mode: PenMode,
             /// `vertices` is a `Vec<Vertex4fx2>` whose internal layout is interpreted as `[[x, y, u, v], [r, g, b, a]]`.
             pub vertices: Vec<Vertex4fx2>,
             /// `indices` is a `Vec<u16>`.
             pub indices: Vec<u16>,
             /// `viewport` pixel size to handle conversion from/to normalized device coordinates. 
             pub viewport_size: Vec2,
+            /// `is_indexed` drawing mode
+            pub is_indexed: bool,
         }
 
         impl Pen2d {            
@@ -2080,32 +2002,24 @@ pub mod auxil {
 
                 Self {
                     draw_op,
-                    mode: PenMode::Fill(Color::BLACK),
                     vertices: Vec::new(),  // with_capacity(u16::MAX as usize) worth it? roughly 3 MB
                     indices: Vec::new(),
                     viewport_size: Vec2::ZERO,
+                    is_indexed: false,
                 }
             }
+
+            pub fn indexed(draw_op: DrawOp) -> Self {
+                let mut pen = Self::new(draw_op);
+                pen.is_indexed = true;
+                pen
+            } 
 
             /// clears the buffered vertices and indices. The gpu buffers, stored in the `DrawOp` are not cleared
             /// (they get updated only when binding, overwriting the relevant data portion, no smart caching atm!).
             pub fn clear(&mut self) {
                 self.vertices.clear();
                 self.indices.clear();
-            }
-
-            /// subsequent api calls will fill the inside of the shape with the given color.
-            #[inline]
-            pub fn fill(&mut self, color: Color) -> &mut Self {
-                self.mode = PenMode::Fill(color);
-                self
-            }
-
-            /// subsequent api calls will outline the shape with given stroke color and thickness.
-            #[inline]
-            pub fn stroke(&mut self, color: Color, thick: Vec2) -> &mut Self {
-                self.mode = PenMode::Stroke(color, thick);
-                self
             }
 
             /// bind the current vertices and indices to the internal `DrawOp` updating the internal gpu buffers.
@@ -2121,138 +2035,20 @@ pub mod auxil {
                 }
             }
 
-            // API for drawing simple shapes
             #[inline]
-            pub fn vrect(&mut self, rect: Rect) {
-                debug_assert!(self.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
-
+            pub fn fill_rect(&mut self, rect: Rect, color: Color) {
                 let vertices = &mut self.vertices;
+                let ndc_rect = rect.ndc(self.viewport_size);
+                let rgba = color.into();
 
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    [r.lt(), r.rt(), r.lb(), r.rb()]
-                };
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        vquad!(vertices, ndc_quad, rgba);
-                    },
-                    PenMode::Stroke(color, thick) => {
-                        let rgba = color.into();
-                        vquad!(vertices, ndc_quad, rgba, thick);
-                    },
-                };
-            }
-
-            #[inline]
-            pub fn irect(&mut self, rect: Rect) {
-                let vertices = &mut self.vertices;
-                let indices = &mut self.indices;
-
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    [r.lt(), r.rt(), r.lb(), r.rb()]
-                };
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        iquad!(vertices, indices, ndc_quad, rgba);
-                    },
-                    PenMode::Stroke(color, thick) => {
-                        let rgba = color.into();
-                        iquad!(vertices, indices, ndc_quad, rgba, thick);
-                    },
-                };
-            }
-
-            #[inline]
-            pub fn vrect_rot(&mut self, rect: Rect, rot: Rot2) {
-                debug_assert!(self.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
-
-                let vertices = &mut self.vertices;
-
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    r.rotate(rot.angle, r.min + rot.pivot * r.wh())
-                };
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        vquad!(vertices, ndc_quad, rgba);
-                    },
-                    PenMode::Stroke(color, thick) => {
-                        let rgba = color.into();
-                        vquad!(vertices, ndc_quad, rgba, thick);
-                    },
-                };           
-            }
-
-            #[inline]
-            pub fn irect_rot(&mut self, rect: Rect, rot: Rot2) {
-                let vertices = &mut self.vertices;
-                let indices = &mut self.indices;
-
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    r.rotate(rot.angle, r.min + rot.pivot * r.wh())
-                };
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        iquad!(vertices, indices, ndc_quad, rgba);
-                    },
-                    PenMode::Stroke(color, thick) => {
-                        let rgba = color.into();
-                        iquad!(vertices, indices, ndc_quad, rgba, thick);
-                    },
-                };           
-            }
-
-            #[inline]
-            pub fn vrect_tex(&mut self, rect: Rect, uv_rect: Rect) {
-                debug_assert!(self.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
-
-                let vertices = &mut self.vertices;
-
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    [r.lt(), r.rt(), r.lb(), r.rb()]
-                };
-
-                let tex_quad = [uv_rect.lt(), uv_rect.rt(), uv_rect.lb(), uv_rect.rb()];
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        vquad_tex!(vertices, (ndc_quad, tex_quad), rgba);
-                    },
-                    _ => panic!("PenMode::Stroke is not supported for textured quads!"),
-                };
-            }
-
-            #[inline]
-            pub fn irect_tex(&mut self, rect: Rect, uv_rect: Rect) {
-                let vertices = &mut self.vertices;
-                let indices = &mut self.indices;
-
-                let ndc_quad = {
-                    let r = rect.ndc(self.viewport_size);
-                    [r.lt(), r.rt(), r.lb(), r.rb()]
-                };
-
-                let tex_quad = [uv_rect.lt(), uv_rect.rt(), uv_rect.lb(), uv_rect.rb()];
-
-                match self.mode {
-                    PenMode::Fill(color) => {
-                        let rgba = color.into();
-                        iquad_tex!(vertices, indices, (ndc_quad, tex_quad), rgba);
-                    },
-                    _ => panic!("PenMode::Stroke is not supported for textured quads!"),
-                };
+                if self.is_indexed {
+                    let indices = &mut self.indices;
+                    push_indices_quad!(indices, vertices.len());
+                    push_vertices_xy!(vertices, [ndc_rect.lt(), ndc_rect.rt(), ndc_rect.lb(), ndc_rect.rb()], rgba);
+                } else {
+                    debug_assert!(self.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
+                    push_vertices_xy!(vertices, [ndc_rect.lt(), ndc_rect.rt(), ndc_rect.lb(), ndc_rect.rt(), ndc_rect.lb(), ndc_rect.rb()], rgba);
+                }
             }
 
         }
@@ -3278,7 +3074,7 @@ pub mod app {
 
 pub mod prelude {
     pub use crate::core::{math::*, color::*, draw::*, draw::prefabs::*};
-    pub use crate::auxil::draw::*;
+    pub use crate::auxil::{*, draw::Pen2d};
     pub use crate::backend::{WindowMode, AppConfig};
     pub use crate::input::*;
     pub use crate::clock::*;
