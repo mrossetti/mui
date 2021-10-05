@@ -12,7 +12,7 @@ fn main() {
     let mut draw_op = DrawOp::new(shader);
     draw_op.bind_uniforms::<Sampler2d>(None, Some(&[white_square.clone()]));
 
-    app.insert(Pen2d::new(draw_op));
+    app.insert(Stream2d::new(draw_op));
 
     app.update(|_app| {
 
@@ -21,14 +21,14 @@ fn main() {
     app.render(|app| {
         let draw_op = {
             let vp_size = app.get_viewport_size().into();
-            let mut pen = app.get_mut::<Pen2d>().unwrap();
-            pen.viewport_size = vp_size;
+            let mut stream = app.get_mut::<Stream2d>().unwrap();
+            stream.viewport_size = vp_size;
 
-            pen.clear();
-            pen.fill_rect(Rect::from_xywh(200.0, 150.0, 400.0, 300.0), Color::RED);
+            stream.clear();
+            stream.fill_rect(Rect::from_xywh(200.0, 150.0, 400.0, 300.0), Color::RED);
             
-            pen.bind_to_draw_op();
-            pen.draw_op.clone()
+            stream.bind_to_draw_op();
+            stream.draw_op.clone()
         };
 
         app.backend.renderer.push_draw_op(draw_op);
