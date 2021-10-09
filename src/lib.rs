@@ -1453,14 +1453,14 @@ pub mod core {
             pub fn from_rgba8(gpu: Arc<Gpu>, data: &[u8], width: usize, height: usize) -> Self {
                 debug_assert!(data.len() == (width * height * 4) as usize, "invalid dimensions!");
                 
-                Self::from_bytes(gpu, data, 4, width, height, wgpu::TextureFormat::Rgba8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Linear)
+                Self::from_bytes(gpu, data, 4, width, height, wgpu::TextureFormat::Rgba8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Nearest)
             }
 
             #[inline]
             pub fn from_a8(gpu: Arc<Gpu>, data: &[u8], width: usize, height: usize) -> Self {
                 debug_assert!(data.len() == (width * height) as usize, "invalid dimensions!");
             
-                Self::from_bytes(gpu, data, 1, width, height, wgpu::TextureFormat::R8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Linear)
+                Self::from_bytes(gpu, data, 1, width, height, wgpu::TextureFormat::R8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Nearest)
             }
 
             pub fn from_rgba32(gpu: Arc<Gpu>, data: &[u32], width: usize, height: usize) -> Self {
@@ -1930,7 +1930,49 @@ pub mod core {
                 
                 [[stage(fragment)]]
                 fn main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
-                    return textureSample(texture0, sampler, in.uv) * in.color;
+                    return in.color * textureSample(texture0, sampler, in.uv);
+                }
+                "#;
+
+            }
+
+            #[derive(Debug)]
+            pub struct MakeShaderText2d;
+
+            impl MakeShader for MakeShaderText2d {
+
+                type Vertex = Vertex4fx2;
+                type UniformBlock = Sampler2d;
+
+                const SOURCE_WGSL: &'static str = r#"
+                struct VertexInput {
+                    [[location(0)]] pos: vec4<f32>;
+                    [[location(1)]] color: vec4<f32>;
+                };
+                
+                struct VertexOutput {
+                    [[builtin(position)]] clip_position: vec4<f32>;
+                    [[location(0)]] uv: vec2<f32>;
+                    [[location(1)]] color: vec4<f32>;
+                };
+                
+                [[group(0), binding(0)]]
+                var texture0: texture_2d<f32>;
+                [[group(0), binding(1)]]
+                var sampler: sampler;
+                
+                [[stage(vertex)]]
+                fn main(in: VertexInput) -> VertexOutput {
+                    var out: VertexOutput;
+                    out.uv = in.pos.zw;
+                    out.color = in.color;
+                    out.clip_position = vec4<f32>(in.pos.xy, 0.0, 1.0);
+                    return out;
+                }
+                
+                [[stage(fragment)]]
+                fn main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+                    return in.color * textureSample(texture0, sampler, in.uv).r;
                 }
                 "#;
 
@@ -1944,12 +1986,105 @@ pub mod core {
 
 
 pub mod auxil {
+    use crate::core::math::{Vec2, vec2};
+
+    #[inline]
+    pub fn ndc_pos(px_pos: Vec2, vp_size: Vec2) -> Vec2 {
+        vec2(2.0, -2.0) * (px_pos - vp_size * 0.5) / vp_size
+    }
 
     pub mod draw {
-        use crate::core::math::{Vec2, vec2, Rect, Rot2};
+        use crate::core::math::{Vec2, vec2, Rect};
         use crate::core::color::Color;
-        use crate::core::draw::{DrawOp, Vertex, UniformBlock, prefabs::{Vertex4fx2, Sampler2d}};
-        
+        use crate::core::draw::{DrawOp, Vertex, UniformBlock, Texture, prefabs::{Vertex4fx2, Sampler2d}};
+        use crate::auxil::draw::text::{CharDrawInfo, FontDrawInfo, TextStyle, TextDirection};
+        use std::sync::Arc;
+
+        pub mod text {
+            use crate::core::math::{Vec2, Rect};
+            use crate::core::color::Color;
+
+            /// [`CharDrawInfo`] all info required to draw a rasterized char.
+            #[derive(Debug, Clone, Copy)]
+            pub struct CharDrawInfo {
+                /// `px_region` is the texture rectangular region (in pixels) where this char is located.
+                pub px_region: Rect,
+                /// `px_advance` is the horizontal advance (in pixels) for this character.
+                pub px_advance: f32,
+            }
+
+            /// [`FontDrawInfo`] all info required to draw text.
+            pub trait FontDrawInfo {
+
+                /// texture_size is needed to convert from pixels to normalized texture coords.
+                fn texture_size(&self) -> Vec2;
+
+                /// monospace fonts advance of a fixed amount (no matter the char pair).
+                fn px_monospace_advance(&self) -> Option<f32> { None }
+                /// proportional fonts advance of a variable amount read from a `kern_table[pre_char][cur_char]` (in addition to the width of the character).
+                #[allow(unused_variables)]
+                fn px_kern(&self, pre_char: char, cur_char: char) -> f32 { 0.0 }
+
+                /// `CharDrawInfo` contains all the info required to draw a char (in particular its `px_region` in the texture and its `px_advance`). 
+                fn get_char_draw_info_or_fallback(&mut self, ch: char) -> CharDrawInfo;
+
+            }
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum TextDirection {
+                /// Left to Right.
+                LTR,
+                /// Right to Left.
+                RTL,
+            }
+
+            impl Default for TextDirection {
+                fn default() -> Self {
+                    Self::LTR
+                }
+            }
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub struct TextStyle {
+                pub px_dest: Vec2,
+                pub color: Color,
+                pub direction: TextDirection,
+                // scale, rotation, effects (bold, italic, underline, outline, glow)?
+            }
+
+            impl Default for TextStyle {
+                fn default() -> Self {
+                    Self {
+                        px_dest: Vec2::ZERO,
+                        color: Color::WHITE,
+                        direction: Default::default(),
+                    }
+                }
+            }
+
+            // Monospace
+
+            // (l2r: POS_X) ndc_rect l = dest.x + (fixed_advance.x - size.x) / 2
+            // (r2l: NEG_X) ndc_rect l = dest.x - fixed_advance.x + (fixed_advance.x - size.x) / 2
+            // (t2b: POS_Y) ndc_rect t = dest.y + (fixed_advance.y - size.y) / 2
+            // (b2t: NEG_Y) ndc_rect t = dest.y - fixed_advance.y + (fixed_advance.y - size.y) / 2
+            // (lt2rb: ONE) ndc_rect lt = dest + (fixed_advance - size) / 2
+            // (rb2lt:-ONE) ndc_rect lt = dest - fixed_advance + (fixed_advance - size) / 2
+
+            // (step: Vec2)
+            // if step.x > 0.0 { step.x -= 1.0 };
+            // if step.y > 0.0 { step.y -= 1.0 };
+            // INCORRECT WIP!!!
+            // let ndc_rect = Rect::from_xy_wh(
+            //  dest + step * fixed_advance + step.signum() * (fixed_advance - size) / 2,
+            //  size,
+            // );
+            
+            // Proportional
+            // 
+
+        }
+
         /// [`Stream2d`] opinionistic attempt at batched primitive drawing.
         pub struct Stream2d {
             /// `draw_op` to be issued (contains the pipeline spec, the gpu buffers and textures).
@@ -1961,8 +2096,10 @@ pub mod auxil {
             pub indices: Vec<u16>,
             /// `viewport` pixel size to handle conversion from/to normalized device coordinates. 
             pub viewport_size: Vec2,
-            /// `is_indexed` drawing mode
+            /// `is_indexed` drawing mode.
             pub is_indexed: bool,
+            /// `font` to draw text.
+            pub font: Option<Box<dyn FontDrawInfo>>,
         }
 
         impl Stream2d {
@@ -1978,6 +2115,7 @@ pub mod auxil {
                     indices: Vec::new(),
                     viewport_size: Vec2::ZERO,
                     is_indexed: false,
+                    font: None,
                 }
             }
 
@@ -2005,6 +2143,12 @@ pub mod auxil {
                     self.draw_op.index_buffer = None;
                     self.draw_op.draw_range = 0 .. self.vertices.len();
                 }
+            }
+
+            /// bind the given font to this stream2d and the associated font atlas texture to the internal draw_op.
+            pub fn bind_font<U: UniformBlock>(&mut self, font: Box<dyn FontDrawInfo>, uniforms: Option<&[U]>, textures: &[Arc<Texture>]) -> Option<Box<dyn FontDrawInfo>> {
+                self.draw_op.bind_uniforms::<U>(uniforms, Some(textures));
+                std::mem::replace(&mut self.font, Some(font))
             }
 
             /// draw a rect by providing a destination `px_rect` (in pixels) and a per-vertex `color` (e.g. fill).
@@ -2044,113 +2188,69 @@ pub mod auxil {
                 }
             }
 
-        }
+            /// draw a sequence of characters by providing the text `content_str` and `style`.
+            #[inline]
+            pub fn push_text(&mut self, content_str: &str, style: &TextStyle) {
+                if let Some(mut font) = std::mem::take(&mut self.font) {
+                    // assumes draw_op bound texture is a font atlas texture with metadata as described by this font!!!
+                    let px_dest = style.px_dest;
 
-        /// [`CharDrawInfo`] all info required to draw a rasterized char.
-        #[derive(Debug, Clone, Copy)]
-        pub struct CharDrawInfo {
-            /// `px_region` is the texture rectangular region (in pixels) where this char is located.
-            pub px_region: Rect,
-            /// `px_advance` is the horizontal advance (in pixels) for this character.
-            pub px_advance: f32,
-        }
+                    let tex_size = font.texture_size();
+                    let rec_tex_size = 1.0 / tex_size;
+                    let vp_size = self.viewport_size;
+                    let rec_vp_size_neg_y = Vec2::INVERT_Y / vp_size;
 
-        /// [`FontDrawInfo`] all info required to draw text.
-        pub trait FontDrawInfo {
-
-            /// monospace fonts advance of a fixed amount (no matter the char pair).
-            fn px_monospace_advance(&self) -> Option<f32>;
-            /// proportional fonts advance of a variable amount read from a `kern_table[pre_char][cur_char]` (in addition to the width of the character).
-            fn px_kern(&self, pre_char: char, cur_char: char) -> f32;
-
-            /// texture_size is needed to convert from pixels to normalized texture coords.
-            fn texture_size(&self) -> Vec2;
-            /// `CharDrawInfo` contains all the info required to draw a char (in particular its `px_region` in the texture and its `px_advance`). 
-            fn get_char_draw_info_or_fallback(&mut self, ch: char) -> CharDrawInfo;
-
-        }
-
-        /// [`Pen2d`] opinionistic attempt at drawing text.
-        pub struct Pen2d {
-            pub font: Box<dyn FontDrawInfo>,
-            pub stream: Stream2d,
-            pub color: Color,
-        }
-
-        impl Pen2d {
-
-            pub fn new<F: FontDrawInfo + 'static>(font: F, draw_op: DrawOp) -> Self {
-                Self {
-                    font: Box::new(font),
-                    stream: Stream2d::indexed(draw_op),
-                    color: Color::BLACK,                    
-                }
-            }
-
-            pub fn text(&mut self, content: &str, px_dest: Vec2) {
-                let tex_size = self.font.texture_size();
-                let vp_size = self.stream.viewport_size;
-
-                let mut ndc_dest = px_dest / vp_size;
-
-                if let Some(px_fixed_advance) = self.font.px_monospace_advance() {
-                    let ndc_fixed_advance = px_fixed_advance / vp_size.x;
-
-                    for ch in content.chars() {
-                        let CharDrawInfo { px_region: ch_px_rect, px_advance: _ } = self.font.get_char_draw_info_or_fallback(ch);
-                        let ch_ndc_size = ch_px_rect.size() / vp_size;
-
-                        let ndc_rect = Rect::from_xywh(
-                            ndc_dest.x + (ndc_fixed_advance - ch_ndc_size.x) * 0.5,
-                            ndc_dest.y,
-                            ch_ndc_size.x,
-                            ch_ndc_size.y,
-                        );
-
-                        let ntc_rect = Rect::from_xy_wh(
-                            ch_px_rect.xy() / tex_size,
-                            ch_px_rect.wh() / tex_size,
-                        );
-
-                        self.stream.fill_texture_nc(ndc_rect, ntc_rect, self.color);
-
-                        ndc_dest.x += ndc_fixed_advance;
-                    }
-                } else {
-                    let mut pre_ch_opt = None;
-
-                    for ch in content.chars() {
-                        let CharDrawInfo { px_region: ch_px_rect, px_advance } = self.font.get_char_draw_info_or_fallback(ch);
-                        
-                        let px_kern = match pre_ch_opt {
-                            Some(pre_ch) => {
-                                let px_kern = self.font.px_kern(pre_ch, ch);
-                                pre_ch_opt = Some(ch);
-                                px_kern
-                            },
-                            None => 0.0,
+                    let mut ndc_dest = 2.0 * (px_dest - vp_size * 0.5) * rec_vp_size_neg_y;
+    
+                    if let Some(px_fixed_advance) = font.px_monospace_advance() {
+                        let ndc_fixed_advance = px_fixed_advance * rec_vp_size_neg_y.x;
+                        let ndc_fixed_advance_signed: f32 = match style.direction {
+                            TextDirection::LTR => ndc_fixed_advance,
+                            TextDirection::RTL => {
+                                ndc_dest.x -= ndc_fixed_advance;
+                                -ndc_fixed_advance
+                            }
                         };
-
-                        ndc_dest.x += px_kern / vp_size.x;
-
-                        if ch_px_rect.area() > 0.0 {  // if not space, tab or alike
-                            let ch_ndc_size = ch_px_rect.size() / vp_size;
-
-                            let ndc_rect = Rect::from_xy_wh(
-                                ndc_dest,
-                                ch_ndc_size,
-                            );
-
-                            let ntc_rect = Rect::from_xy_wh(
-                                ch_px_rect.xy() / tex_size,
-                                ch_px_rect.wh() / tex_size,
-                            );
-
-                            self.stream.fill_texture_nc(ndc_rect, ntc_rect, self.color);
+    
+                        for ch in content_str.chars() {
+                            let CharDrawInfo { px_region: ch_px_rect, px_advance: _ } = font.get_char_draw_info_or_fallback(ch);
+                            let ch_ndc_size = ch_px_rect.size() * rec_vp_size_neg_y;
+                            let ndc_rect = Rect::from_xy_wh(vec2(ndc_dest.x + (ndc_fixed_advance - ch_ndc_size.x) * 0.5, ndc_dest.y), ch_ndc_size);
+                            let ntc_rect = Rect::from_xy_wh(ch_px_rect.xy() * rec_tex_size, ch_px_rect.wh() * rec_tex_size);
+    
+                            self.fill_texture_nc(ndc_rect, ntc_rect, style.color);
+    
+                            ndc_dest.x += ndc_fixed_advance_signed;
+                        }
+                    } else {
+                        if let TextDirection::RTL = style.direction {
+                            todo!("not implemented yet!");
                         }
 
-                        ndc_dest.x += px_advance / vp_size.x;
+                        let mut pre_ch = ' ';
+    
+                        for ch in content_str.chars() {
+                            let CharDrawInfo { px_region: ch_px_rect, px_advance } = font.get_char_draw_info_or_fallback(ch);
+                            let px_kern = font.px_kern(pre_ch, ch);
+                            
+                            ndc_dest.x += px_kern * rec_vp_size_neg_y.x;
+    
+                            if ch_px_rect.area() > 0.0 {  // if not space, tab or alike
+                                let ch_ndc_size = ch_px_rect.size() * rec_vp_size_neg_y;
+                                let ndc_rect = Rect::from_xy_wh(ndc_dest, ch_ndc_size);
+                                let ntc_rect = Rect::from_xy_wh(ch_px_rect.xy() * rec_tex_size, ch_px_rect.wh() * rec_tex_size);
+    
+                                self.fill_texture_nc(ndc_rect, ntc_rect, style.color);
+                            }
+    
+                            ndc_dest.x += px_advance * rec_vp_size_neg_y.x;
+                            pre_ch = ch;
+                        }
                     }
+                
+                    self.font = Some(font);
+                } else {
+                    eprintln!("Font not bound!");
                 }
             }
 
@@ -2159,10 +2259,10 @@ pub mod auxil {
     }
 
     pub mod font {
-        use crate::core::math::{Vec2, Rect};
-        use crate::core::draw::{DrawOp, Texture};
-        use crate::auxil::draw::{CharDrawInfo, FontDrawInfo};
         use crate::backend::Gpu;
+        use crate::core::math::{Vec2, Rect};
+        use crate::core::draw::Texture;
+        use crate::auxil::draw::text::{CharDrawInfo, FontDrawInfo};
         use ab_glyph::{Font as abFont, ScaleFont as abScaleFont};
         use std::collections::HashMap;
         use std::sync::Arc;
@@ -2219,24 +2319,32 @@ pub mod auxil {
             }
     
             pub fn new<F: abFont>(gpu: Arc<Gpu>, ab_font: &F, px_scale: usize, chars: &[char]) -> Self {
-                debug_assert!(Self::BPP == 1, "Code for rasterizing glyphs assumes alpha (u8) only texture!");
-    
-                let row_h = px_scale;
-                let scale = row_h as f32;
+                let scale = px_scale as f32;
+                let ab_font_s = ab_font.as_scaled(scale);
+                let ver_ascent = ab_font_s.ascent();
 
+                let est_h = (scale + scale - ver_ascent).ceil();  // single glyph max height
                 let tex_w = Self::MAX_TEXTURE_DIM as usize;
-                let tex_h = (chars.len() as f32 / (tex_w as f32 / row_h as f32)).ceil() as usize * row_h;  // upper bound for these chars
-                let stride = tex_w * Self::BPP as usize;
+                let est_rows = (chars.len() as f32 / (tex_w as f32 / est_h)).ceil() as usize;  // using glyph max height (higher than width for glyphs) as proxy for max width (since we want upper bound anyways)
+                let tex_h = (est_rows + 1) * (est_h as usize + Self::VER_PADDING as usize);  // height upper bound
+
+                let num_channels = Self::BPP as usize;
+                let stride = tex_w * num_channels;
 
                 let mut texture_data = vec![0_u8; tex_h * stride];
                 let mut map_char_info = HashMap::with_capacity(chars.len());
-    
-                let mut cur_x = 0;
-                let mut cur_y = 0;
-    
-                let ab_font_s = ab_font.as_scaled(scale);
-                let ver_ascent = ab_font_s.ascent();
-    
+                let mut max_h_by_row = Vec::with_capacity(est_rows + 1);
+                
+                let mut cur_x = 1;
+                let mut cur_y = 1;
+                let mut cur_i = 0;
+                max_h_by_row.push(0);
+                
+                // Pixel at (0, 0) reserved for white
+                for channel_index in 0 .. num_channels { 
+                    texture_data[channel_index] = 255;
+                }
+                
                 for ch in chars.iter().cloned() {
                     let glyph_id = ab_font.glyph_id(ch);
                     let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(0.0, 0.0));
@@ -2246,18 +2354,22 @@ pub mod auxil {
                         let cur_h = bounds.height().ceil() as usize;
     
                         if (cur_x + cur_w) > tex_w {
-                            cur_y += row_h + Self::VER_PADDING as usize;
                             cur_x = 0;
+                            cur_y += max_h_by_row[cur_i] + Self::VER_PADDING as usize;
+                            cur_i += 1;
+                            max_h_by_row.push(0);
                         }
     
                         let ver_align = (ver_ascent + bounds.min.y).round().max(0.0) as usize;
                         let off_index = (cur_y + ver_align) as usize * stride + cur_x as usize;
-    
+
                         out.draw(|x, y, c| {
                             let index = off_index + y as usize * stride + x as usize;
                             let value = (c * 255.0) as u8;
                             
-                            texture_data[index] = value;
+                            for channel_index in 0 .. num_channels { 
+                                texture_data[index + channel_index] = value;
+                            }
                         });
     
                         let region = Rect::from_ltrb(
@@ -2266,8 +2378,13 @@ pub mod auxil {
                             (cur_x + cur_w + 1) as _,
                             (cur_y + ver_align + cur_h + 1) as _,
                         );
+
+                        let cur_h_from_last_row_bottom = ver_align + cur_h + 1;
+                        if cur_h_from_last_row_bottom > max_h_by_row[cur_i] {
+                            max_h_by_row[cur_i] = cur_h_from_last_row_bottom;
+                        }
     
-                        cur_x += cur_w + Self::HOR_PADDING as usize;
+                        cur_x += cur_w + 1 + Self::HOR_PADDING as usize;
     
                         region
                     } else {
@@ -2281,16 +2398,20 @@ pub mod auxil {
                         px_advance,
                     });
                 }
-            
-                let texture = Arc::new(Texture::from_a8(gpu.clone(), &texture_data, tex_w as _, tex_h as _));
+
+                let texture = match num_channels {
+                    1 => Texture::from_a8(gpu.clone(), &texture_data, tex_w as _, tex_h as _),
+                    4 => Texture::from_rgba8(gpu.clone(), &texture_data, tex_w as _, tex_h as _),
+                    _ => unimplemented!(),
+                };
 
                 Self {
                     gpu,
-                    texture,
+                    texture: Arc::new(texture),
                     texture_data,
                     texture_size: (tex_w as _, tex_h as _).into(),
                     map_char_info,
-                    px_scale: scale as _,
+                    px_scale,
                     cursor: (cur_x as _, cur_y as _).into()
                 }
             }
@@ -2299,7 +2420,6 @@ pub mod auxil {
         
         pub struct Font {
             pub ab_font: ab_glyph::FontArc,
-            pub draw_op: DrawOp,
             pub monospace: Option<f32>,
             pub atlas: FontAtlas,
             pub char_fallback: char,
@@ -2309,7 +2429,7 @@ pub mod auxil {
 
             pub const DEFAULT_CHAR_FALLBACK: char = '#';
 
-            pub fn load(gpu: Arc<Gpu>, draw_op: DrawOp, path: &str, monospace: bool) -> Self {
+            pub fn load(gpu: Arc<Gpu>, path: &str, monospace: bool) -> Self {
                 let ascii = (32 ..= 126_u8).map(|c| c as char).collect::<Vec<_>>();
                 let bytes = std::fs::read(path).unwrap();
                 let ab_font = ab_glyph::FontArc::try_from_vec(bytes).unwrap();
@@ -2317,9 +2437,11 @@ pub mod auxil {
                 let mut atlas = FontAtlas::new(gpu, &ab_font, 32, &ascii);
                 let space = atlas.map_char_info.get(&' ').unwrap().clone();
 
+                assert!(space.px_region == Rect::ZERO, "space char incorrectly rasterized!");
+
                 atlas.map_char_info.insert('\t', GlyphInfo {
                     ab_id: ab_font.glyph_id('\t'),
-                    px_region: space.px_region,
+                    px_region: Rect::ZERO,
                     px_advance: space.px_advance * 4.0,
                 });
 
@@ -2336,7 +2458,6 @@ pub mod auxil {
 
                 Self {
                     ab_font,
-                    draw_op,
                     atlas,
                     monospace: monospace_adv,
                     char_fallback,
@@ -2610,6 +2731,7 @@ pub mod backend {
                 instance.request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference,
                     compatible_surface: Some(&surface),
+                    ..Default::default()
                 })
             ).unwrap();
             let (device, queue) = futures::executor::block_on(
@@ -2647,7 +2769,7 @@ pub mod backend {
                 surface: WgpuSurfaceWrapper {
                     raw: surface,
                     config: surface_config,
-                    clear_color: wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+                    clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
                 },
                 renderer: Renderer::new(),
                 gpu,
@@ -2662,12 +2784,12 @@ pub mod backend {
         }
 
         #[inline]
-        pub fn request_frame(&self) -> Option<wgpu::SurfaceFrame> {
-            match self.surface.raw.get_current_frame() {
+        pub fn request_frame(&self) -> Option<wgpu::SurfaceTexture> {
+            match self.surface.raw.get_current_texture() {
                 Ok(frame) => Some(frame),
                 Err(wgpu::SurfaceError::Lost) => {
                     self.surface.raw.configure(&self.gpu.device, &self.surface.config); 
-                    match self.surface.raw.get_current_frame() {
+                    match self.surface.raw.get_current_texture() {
                         Ok(frame) => Some(frame),
                         Err(e) => {
                             eprintln!("{:?}", e);
@@ -3325,7 +3447,7 @@ pub mod app {
         #[inline]
         pub fn render_frame(&mut self) {
             if let Some(frame) = self.backend.request_frame() {
-                let frame_view = frame.output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let mut command_encoder = self.backend.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
@@ -3344,9 +3466,10 @@ pub mod app {
                 self.backend.renderer.submit_draw_ops(&mut render_pass);
                 drop(render_pass);
                 self.backend.gpu.queue.submit(std::iter::once(command_encoder.finish()));
+                frame.present();
                 self.backend.renderer.clear_draw_ops();
             } else {
-                eprintln!("Failed to acquire surface frame!");
+                eprintln!("Failed to acquire next swap chain frame!");
                 self.exit()
             }
         }
@@ -3400,7 +3523,7 @@ pub mod app {
 
 pub mod prelude {
     pub use crate::core::{math::*, color::*, draw::*, draw::prefabs::*};
-    pub use crate::auxil::{*, draw::{Stream2d, Pen2d}};
+    pub use crate::auxil::{*, draw::*, font::*};
     pub use crate::backend::{WindowMode, AppConfig};
     pub use crate::input::*;
     pub use crate::clock::*;
