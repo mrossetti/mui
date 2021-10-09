@@ -1,7 +1,5 @@
 /local
 /target
-crates/*/target
-/benches/target
 Cargo.lock
 .cargo/config
 .cargo/config.toml
