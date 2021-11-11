@@ -1,9 +1,11 @@
+#[allow(unused_macros)]
+
 
 pub mod core {
 
     pub mod any_map {
-        use ::core::any::{TypeId, Any};
-        use ::core::hash::{BuildHasherDefault, Hasher};
+        use std::any::{TypeId, Any};
+        use std::hash::{BuildHasherDefault, Hasher};
         use hashbrown::HashMap;
 
         #[derive(Default)]
@@ -35,9 +37,11 @@ pub mod core {
 
         /// HashMap meant to be used with TypeId keys (already fully hashed u64).
         pub type AnyMap = HashMap<TypeId, Box<dyn Any>, BuildHasherDefault<NoOpHasher>>;
+
     }
 
     pub mod math {
+        use serde::{Serialize, Deserialize};
         use std::f32::consts::PI;
         use std::ops::{
             Neg,
@@ -46,9 +50,9 @@ pub mod core {
             Mul, MulAssign,
             Div, DivAssign
         };
-        
+
         /// [`Vec2`]
-        #[derive(Debug, Clone, Copy, PartialEq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
         pub struct Vec2 {
             pub x: f32,
             pub y: f32,
@@ -521,7 +525,7 @@ pub mod core {
         }
 
         /// [`Rect`]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
         pub struct Rect {
             pub min: Vec2,
             pub max: Vec2,
@@ -820,108 +824,10 @@ pub mod core {
             }
         }
 
-        /// [`Rot2`]
-        #[derive(Debug, Clone, Copy, PartialEq)]
-        pub struct Rot2 {
-            /// `rel_pivot` to be offset by object origin and scaled by object size (e.g. (0.5, 0.5) is object center). 
-            pub rel_pivot: Vec2,
-            /// `angle` in radians to rotate from (wrt pivot).
-            pub angle: f32,
-        }
-
-        impl Rot2 {
-            pub const DEG_TO_RAD: f32 = PI / 180.0;
-            pub const RAD_TO_DEG: f32 = 180.0 / PI;
-
-            #[inline]
-            pub fn new(rel_pivot: Vec2, angle: f32) -> Self {
-                Self { rel_pivot, angle }
-            }
-
-            #[inline]
-            pub fn abs_pivot(&self, rect: Rect) -> Vec2 {
-                // any object has a min bounding box (axis aligned) wrapping it.
-                rect.lt() + self.rel_pivot * (rect.rb() - rect.lt())
-            } 
-
-            #[inline]
-            pub fn from_center(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.5, 0.5),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_lb(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.0, 0.0),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_rb(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(1.0, 0.0),
-                    angle,
-                }
-            }
-            
-            #[inline]
-            pub fn from_lt(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.0, 1.0),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_rt(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(1.0, 1.0),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_midl(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.0, 0.5),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_midt(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.5, 1.0),
-                    angle,
-                }
-            }
-            
-            #[inline]
-            pub fn from_midr(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(1.0, 0.5),
-                    angle,
-                }
-            }
-
-            #[inline]
-            pub fn from_midb(angle: f32) -> Self {
-                Self {
-                    rel_pivot: vec2(0.5, 0.0),
-                    angle,
-                }
-            }
-
-        }
-
-        impl Eq for Rot2 {}
     }
 
     pub mod color {
+        use serde::{Serialize, Deserialize};
         use std::ops::{
             Neg,
             Add, AddAssign,
@@ -931,7 +837,7 @@ pub mod core {
         };
         
         /// [`Color`]
-        #[derive(Debug, Clone, Copy, PartialEq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
         pub struct Color {
             pub r: f32,
             pub g: f32,
@@ -1300,6 +1206,7 @@ pub mod core {
 
     pub mod draw {
         use crate::backend::Gpu;
+        use crate::core::math::{Vec2, vec2, Rect};
         use wgpu::util::DeviceExt;
         use std::sync::Arc;
         use std::ops::Range;
@@ -1402,6 +1309,11 @@ pub mod core {
         
         impl Texture {
 
+            #[inline]
+            pub fn from_texture(gpu: Arc<Gpu>, data: &[u8], texture: &Arc<Texture>) -> Self {
+                Self::from_bytes(gpu, data, texture.bpp(), texture.width(), texture.height(), texture.format, texture.address_mode, texture.filter_mode)
+            }
+
             pub fn from_bytes(
                 gpu: Arc<Gpu>,
                 data: &[u8],
@@ -1435,7 +1347,7 @@ pub mod core {
                     wgpu::ImageDataLayout {
                         offset: 0,
                         bytes_per_row: std::num::NonZeroU32::new(bpp as u32 * width as u32),
-                        rows_per_image: std::num::NonZeroU32::new(height as u32),
+                        rows_per_image: None,  // only for texture arrays!
                     },
                     extent,
                 );
@@ -1457,10 +1369,10 @@ pub mod core {
             }
 
             #[inline]
-            pub fn from_a8(gpu: Arc<Gpu>, data: &[u8], width: usize, height: usize) -> Self {
+            pub fn from_luma8(gpu: Arc<Gpu>, data: &[u8], width: usize, height: usize) -> Self {
                 debug_assert!(data.len() == (width * height) as usize, "invalid dimensions!");
             
-                Self::from_bytes(gpu, data, 1, width, height, wgpu::TextureFormat::R8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Nearest)
+                Self::from_bytes(gpu, data, 1, width, height, wgpu::TextureFormat::R8Unorm, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Linear)
             }
 
             pub fn from_rgba32(gpu: Arc<Gpu>, data: &[u32], width: usize, height: usize) -> Self {
@@ -1469,32 +1381,23 @@ pub mod core {
                 let mut bytes = Vec::with_capacity(data.len() * 4);
 
                 for rgba32 in data.iter().cloned() {
-                    bytes.push((rgba32 & 0xFF) as u8);
-                    bytes.push((rgba32 & 0x00FF) as u8);
-                    bytes.push((rgba32 & 0x0000FF) as u8);
+                    bytes.push(((rgba32 & 0xFF000000) >> 24) as u8);
+                    bytes.push(((rgba32 & 0x00FF0000) >> 16) as u8);
+                    bytes.push(((rgba32 & 0x0000FF00) >> 8) as u8);
                     bytes.push((rgba32 & 0x000000FF) as u8);
                 }
             
                 Self::from_rgba8(gpu, &bytes, width, height)
             }
         
-            pub fn load(
-                gpu: Arc<Gpu>,
-                path: &str,
-                flip_x: bool,
-                flip_y: bool,
-            ) -> Self {
-                use image::GenericImageView;
+            pub fn load(gpu: Arc<Gpu>, path: &str) -> Self {
+                let (data, width, height) = load_bitmap(path);
+                let mut bpp = data.len() / (width as usize * height as usize);
+                let mut stride = (width as usize * bpp) as usize;
                 
-                let img = image::open(&std::path::Path::new(path))
-                    .expect(&format!("unable to load texture from path {}", path));
-
-                let width = img.width() as usize;
-                let height = img.height() as usize;
-                let data = img.into_bytes();
-
-                let bpp = data.len() / (width as usize * height as usize);
-                let stride = (width as usize * bpp) as usize;
+                let flip_x = false;
+                let flip_y = false;
+                let keep_a_only = false;
 
                 let data_vec = {
                     if flip_x && flip_y {
@@ -1509,16 +1412,22 @@ pub mod core {
                             for chunk in data.chunks_exact(stride).rev() { v.extend(chunk); }
                             v
                         } else {
-                            data.to_vec()
+                            if keep_a_only && bpp > 1 {
+                                stride = width as _;
+                                let mut v = Vec::with_capacity(stride * height);
+                                for i in (bpp-1 .. data.len()).step_by(bpp) {
+                                    v.push(data[i]);
+                                }
+                                bpp = 1;
+                                v
+                            } else {
+                                data.to_vec()
+                            }
                         }
                     }
                 };
 
-                let format = match bpp {
-                    1 => wgpu::TextureFormat::R8Unorm,
-                    4 => wgpu::TextureFormat::Rgba8Unorm,
-                    _ => panic!("bpp texture format not supported!"),
-                };
+                let format = bpp_to_wgpu_texture_format(bpp);
 
                 Self::from_bytes(
                     gpu,
@@ -1531,7 +1440,64 @@ pub mod core {
                     wgpu::FilterMode::Linear,
                 )
             }
-        
+
+            pub fn update(&self, gpu: &Arc<Gpu>, data: &[u8], px_update_rect: Option<Rect>) {
+                let bpp = self.bpp() as usize;
+                debug_assert!(data.len() % bpp == 0, "wrong size for data: expected {} bytes per pixel", bpp);
+                let (tex_w, tex_h) = self.wh().into();
+                let stride = bpp * tex_w as usize;
+                
+                let [min_x, min_y, max_x, max_y, w, h] = {
+                    if let Some(rect) = px_update_rect {
+                        [rect.l() as usize, rect.t() as usize, rect.r() as usize, rect.b() as usize, rect.w() as usize, rect.h() as usize]
+                    } else {
+                        [0, 0, self.w() as usize, self.h() as usize, self.w() as usize, self.h() as usize]
+                    }
+                };
+
+                let rect_flat = h * w * bpp;
+                let tex_flat = (tex_h * tex_w) as usize * bpp; 
+
+                #[allow(unused_mut)]
+                let mut relevant_data = Vec::new();
+
+                let relevant_data_slice = {
+                    if data.len() != rect_flat {
+                        // manually extract rect from data (assumed texture sized)
+                        debug_assert!(data.len() == tex_flat, "wrong size for data: expected either length {} (px update rect) or {} (texture size flat) to extract rect from", rect_flat, tex_flat);
+
+                        relevant_data.reserve(h * w * bpp);
+                        for cur_y in min_y as usize .. max_y as usize {
+                            relevant_data.extend_from_slice(&data[cur_y * stride + min_x .. cur_y * stride + max_x]);
+                        }
+
+                        &relevant_data[..]
+                    } else {
+                        &data[..]
+                    }
+                };
+
+                gpu.queue.write_texture(
+                    wgpu::ImageCopyTextureBase {
+                        texture: &self.raw,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    relevant_data_slice,
+                    wgpu::ImageDataLayout {
+                        offset: (min_y as usize * stride + min_x as usize) as _,
+                        bytes_per_row: std::num::NonZeroU32::new(stride as u32),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d {
+                        width: w as _,
+                        height: h as _,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+
             #[inline]
             pub fn w(&self) -> f32 {
                 self.extent.width as _
@@ -1541,7 +1507,17 @@ pub mod core {
             pub fn h(&self) -> f32 {
                 self.extent.height as _
             }
-        
+
+            #[inline]
+            pub fn wh(&self) -> Vec2 {
+                vec2(self.w(), self.h())
+            }
+
+            #[inline]
+            pub fn size(&self) -> Vec2 {
+                vec2(self.w(), self.h())
+            }
+
             #[inline]
             pub fn width(&self) -> usize {
                 self.extent.width as _
@@ -1564,14 +1540,22 @@ pub mod core {
 
             #[inline]
             pub fn stride(&self) -> usize {
-                (self.extent.width as u32 * self.format.describe().block_size as u32) as _
+                (self.extent.width as usize * self.bpp() as usize) as _
             }
         
         }
 
+        /// infer [`wgpu::TextureFormat`] from `bpp` (bytes per pixel)
+        pub fn bpp_to_wgpu_texture_format(bpp: usize) -> wgpu::TextureFormat {
+            match bpp {
+                1 => wgpu::TextureFormat::R8Unorm,
+                4 => wgpu::TextureFormat::Rgba8Unorm,
+                _ => panic!("texture format for {} bpp not supported!", bpp),
+            }
+        }
+
         /// save a bitmap to disk (`path` must include the extension).
-        // ideally method on Texture which knows its data, bpp, w, h (TODO: how to retrieve tex data from gpu memory? TODO: flipping).
-        pub fn save_bitmap(path: &str, data: &[u8], width: u16, height: u16) {
+        pub fn save_bitmap(path: &str, data: &[u8], width: usize, height: usize) {
             let bpp = data.len() / (width as usize * height as usize);
 
             let w = width as u32;
@@ -1609,6 +1593,20 @@ pub mod core {
                     panic!("cannot save texture with {} channels: only A (1), RGB (3), RGBA (4) allowed.", bpp);
                 }
             }
+        }
+
+        /// load a bitmap from disk (`path` must include the extension).
+        pub fn load_bitmap(path: &str) -> (Vec<u8>, usize, usize) {
+            use image::GenericImageView;
+            
+            let img = image::open(&std::path::Path::new(path))
+                .expect(&format!("unable to load texture from path {}", path));
+
+            let width = img.width() as usize;
+            let height = img.height() as usize;
+            let data = img.into_bytes();
+
+            (data, width, height)
         }
 
         /// [`Shader`] describes the pipeline spec.
@@ -1674,6 +1672,9 @@ pub mod core {
                     push_constant_ranges: &[],
                 });
             
+                // println!("Pipeline Layout: {:?}", pipeline_layout);
+                // println!("Vertex Buffer Layout: {:?}\n", V::BUFFER_LAYOUT);
+
                 let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: None,
                     layout: Some(&pipeline_layout),
@@ -1770,15 +1771,15 @@ pub mod core {
                 }
             }
         
-            pub fn bind_uniforms<U: UniformBlock>(&mut self, uniforms: Option<&[U]>, textures: Option<&[Arc<Texture>]>) {
+            pub fn bind_uniforms<U: UniformBlock>(&mut self, uniforms: &[U], textures: &[Arc<Texture>]) {
                 debug_assert_eq!(U::UNIFORM_BIND_GROUP_LAYOUT_ENTRIES, self.shader.uniform_bind_group_layout_entries, "UniformBlock 'uniform bind group layout entries' not compliant with Shader spec!");
                 debug_assert_eq!(U::TEXTURE_BIND_GROUP_LAYOUT_ENTRIES, self.shader.texture_bind_group_layout_entries, "UniformBlock 'texture bind group layout entries' not compliant with Shader spec!");
         
                 let gpu = &self.shader.gpu;
 
-                if let Some(uniforms_) = uniforms {
+                if uniforms.len() > 0 {
                     // TODO: update existing if already initialized!
-                    self.uniform_buffers = Some(uniforms_.iter().cloned().map(
+                    self.uniform_buffers = Some(uniforms.iter().cloned().map(
                         |u| Arc::new(gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: None,
                             contents: bytemuck::cast_slice(&[u]),
@@ -1793,10 +1794,10 @@ pub mod core {
                     })));
                 }
         
-                if let Some(textures_) = textures {
+                if textures.len() > 0 {
                     // TODO: allow sampler settings as additional parameters, consider not recreating the sampler every time.
                     // More in general, more efficient resource sharing (e.g. reusing the entire texture bind group).
-                    self.texture_views_samplers = Some(textures_.iter().enumerate().map(
+                    self.texture_views_samplers = Some(textures.iter().enumerate().map(
                         |(i, texture)| {
                             let view_dim = match U::TEXTURE_BIND_GROUP_LAYOUT_ENTRIES[2 * i].ty {
                                 wgpu::BindingType::Texture { view_dimension, .. } => view_dimension,
@@ -1858,6 +1859,40 @@ pub mod core {
         
         }
 
+        pub mod text {
+            use serde::{Serialize, Deserialize};
+            use crate::core::math::{Vec2, Rect};
+            
+            /// [`CharDrawInfo`] info required to draw a rasterized char.
+            #[derive(Debug, Clone, Serialize, Deserialize)]
+            pub struct CharDrawInfo {
+                /// `px_region` is the texture rectangular region (in pixels) where this char is located.
+                pub px_region: Rect,
+                /// `px_advance` is the horizontal advance (in pixels) for this character.
+                pub px_advance: f32,
+            }
+
+            /// [`FontDrawInfo`] info required to draw arbitrary text characters (rasterized from some font).
+            pub trait FontDrawInfo {
+
+                /// current texture size, needed to convert from pixels to normalized texture coords.
+                fn texture_size(&self) -> Vec2;
+
+                /// monospace fonts advance of a fixed amount (no matter the char pair).
+                fn px_monospace_advance(&self) -> Option<f32> { None }
+
+                /// proportional fonts advance of a variable amount read from a `kern_table[pre_char][cur_char]` (in addition to the width of the character);
+                /// additionally supports a `bits` parameter for style variations (e.g. higher kern for bold).
+                #[allow(unused_variables)]
+                fn px_kern(&self, pre_chr: char, cur_chr: char, bits: u64) -> f32 { 0.0 }
+
+                /// `CharDrawInfo` contains all the info required to draw a char (in particular its `px_region` in the texture and its `px_advance`).
+                fn get_char_draw_info_or_fallback(&mut self, chr: char, bits: u64) -> CharDrawInfo;
+
+            }
+
+        }
+
         /// [`prefabs`] ready-made [`Vertex`], [`UniformBlock`] and [`MakeShader`] recipes.
         pub mod prefabs {
             use super::{Vertex, UniformBlock, MakeShader};
@@ -1893,6 +1928,27 @@ pub mod core {
             impl UniformBlock for Sampler2d {
                 const UNIFORM_BIND_GROUP_LAYOUT_ENTRIES: &'static [wgpu::BindGroupLayoutEntry] = &[];
             }
+
+            #[repr(C)]
+            #[derive(Debug, Clone, Copy)]
+            pub struct UniformBlock4f(pub [f32; 4]);
+            unsafe impl bytemuck::Pod for UniformBlock4f {}
+            unsafe impl bytemuck::Zeroable for UniformBlock4f {}
+            impl UniformBlock for UniformBlock4f {}
+
+            #[repr(C)]
+            #[derive(Debug, Clone, Copy)]
+            pub struct UniformBlock4fx2(pub [[f32; 4]; 2]);
+            unsafe impl bytemuck::Pod for UniformBlock4fx2 {}
+            unsafe impl bytemuck::Zeroable for UniformBlock4fx2 {}
+            impl UniformBlock for UniformBlock4fx2 {}
+
+            #[repr(C)]
+            #[derive(Debug, Clone, Copy)]
+            pub struct UniformBlock4fx4(pub [[f32; 4]; 4]);
+            unsafe impl bytemuck::Pod for UniformBlock4fx4 {}
+            unsafe impl bytemuck::Zeroable for UniformBlock4fx4 {}
+            impl UniformBlock for UniformBlock4fx4 {}
 
             #[derive(Debug)]
             pub struct MakeShader2d;
@@ -1937,9 +1993,9 @@ pub mod core {
             }
 
             #[derive(Debug)]
-            pub struct MakeShaderText2d;
+            pub struct MakeShader2dR;
 
-            impl MakeShader for MakeShaderText2d {
+            impl MakeShader for MakeShader2dR {
 
                 type Vertex = Vertex4fx2;
                 type UniformBlock = Sampler2d;
@@ -1972,7 +2028,82 @@ pub mod core {
                 
                 [[stage(fragment)]]
                 fn main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
-                    return in.color * textureSample(texture0, sampler, in.uv).r;
+                    return in.color * textureSample(texture0, sampler, in.uv).x;
+                }
+                "#;
+
+            }
+
+            #[derive(Debug)]
+            pub struct MakeShaderSdfR;
+
+            impl MakeShader for MakeShaderSdfR {
+
+                type Vertex = Vertex4fx2;
+                type UniformBlock = Sampler2d;
+
+                const SOURCE_WGSL: &'static str = r#"
+                struct VertexInput {
+                    [[location(0)]] xyuv: vec4<f32>;
+                    [[location(1)]] fg_bg_bd: vec4<f32>;
+                };
+                
+                struct VertexOutput {
+                    [[builtin(position)]] clip_position: vec4<f32>;
+                    [[location(0)]] uv: vec2<f32>;
+                    [[location(1)]] fg_rgba: vec4<f32>;
+                    [[location(2)]] bg_rgba: vec4<f32>;
+                    [[location(3)]] bd_rgba: vec4<f32>;
+                    [[location(4)]] bd_thick: f32;
+                };
+
+                [[group(0), binding(0)]]
+                var texture0: texture_2d<f32>;
+                [[group(0), binding(1)]]
+                var sampler: sampler;
+                
+                let R: u32 = 0xFF000000u; let R_SHIFT: u32 = 24u;
+                let G: u32 = 0x00FF0000u; let G_SHIFT: u32 = 16u;
+                let B: u32 = 0x0000FF00u; let B_SHIFT: u32 =  8u;
+                let A: u32 = 0x000000FFu; let A_SHIFT: u32 =  0u;
+
+                fn unpack_rgba32(rgba32: u32) -> vec4<f32> {
+                    let r = f32((rgba32 & R) >> R_SHIFT) / 255.0;
+                    let g = f32((rgba32 & G) >> G_SHIFT) / 255.0;
+                    let b = f32((rgba32 & B) >> B_SHIFT) / 255.0;
+                    let a = f32((rgba32 & A) >> A_SHIFT) / 255.0;
+                    return vec4<f32>(r, g, b, a);
+                }
+
+                let SDF_SMOOTHING: f32 = 0.0625;
+
+                [[stage(vertex)]]
+                fn main(in: VertexInput) -> VertexOutput {
+                    var out: VertexOutput;
+                    out.clip_position = vec4<f32>(in.xyuv.xy, 0.0, 1.0);
+                    out.uv = in.xyuv.zw;
+                    out.fg_rgba = unpack_rgba32(u32(in.fg_bg_bd.x));
+                    out.bg_rgba = unpack_rgba32(u32(in.fg_bg_bd.y));
+                    out.bd_rgba = unpack_rgba32(u32(in.fg_bg_bd.z));
+                    out.bd_thick = in.fg_bg_bd.w;
+                    return out;
+                }
+                
+                [[stage(fragment)]]
+                fn main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+                    let sdist = textureSample(texture0, sampler, in.uv).x;
+                    let alpha = smoothStep(0.5 - SDF_SMOOTHING, 0.5 + SDF_SMOOTHING, sdist);
+                    let thick = in.bd_thick;
+
+                    if (thick > 0.0 && sdist > (0.5 - thick * 0.075) && sdist < 0.511) {
+                        return in.bd_rgba;
+                    } else {
+                        if (sdist < 0.5) {  // outside
+                            return vec4<f32>(in.bd_rgba.xyz * (1.0 - alpha) + in.bg_rgba.xyz * alpha, alpha);
+                        } else {  // inside
+                            return vec4<f32>(in.bd_rgba.xyz * (1.0 - alpha) + in.fg_rgba.xyz * alpha, alpha);
+                        }
+                    }
                 }
                 "#;
 
@@ -1993,147 +2124,218 @@ pub mod auxil {
         vec2(2.0, -2.0) * (px_pos - vp_size * 0.5) / vp_size
     }
 
+    #[macro_export]
+    macro_rules! pack32 {
+        ($v0:expr, $v1:expr) => {{
+            (($v0 as u32) << 16) | ($v1 as u32)
+        }};
+        ($v0:expr, $v1:expr, $v2:expr, $v3:expr) => {{
+            (($v0 as u32) << 24) | (($v1 as u32) << 16) | (($v2 as u32) << 8) | ($v3 as u32)
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! unpack32x2 {
+        ($v:expr) => {{
+            [
+                (($v & 0xFFFF0000) >> 16) as u16,
+                 ($v & 0x0000FFFF) as u16
+            ]
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! unpack32x4 {
+        ($v:expr) => {{
+            [
+                (($v & 0xFF000000) >> 24) as u8,
+                (($v & 0x00FF0000) >> 16) as u8,
+                (($v & 0x0000FF00) >>  8) as u8,
+                 ($v & 0x000000FF) as u8,
+            ]
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! pack64 {
+        ($v0:expr, $v1:expr) => {{
+            (($v0 as u64) << 32) | $v1 as u64
+        }};
+        ($v0:expr, $v1:expr, $v2:expr, $v3:expr) => {{
+            (($v0 as u64) << 48) | (($v1 as u64) << 32) | (($v2 as u64) << 16) | $v3 as u64
+        }};
+        ($v0:expr, $v1:expr, $v2:expr, $v3:expr, $v4:expr, $v5:expr, $v6:expr, $v7:expr) => {{
+            (($v0 as u64) << 56) | (($v1 as u64) << 48) | (($v2 as u64) << 40) | (($v3 as u64) << 32) | (($v4 as u64) << 24) | (($v5 as u64) << 16) | (($v6 as u64) << 8) | $v7 as u64
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! unpack64x2 {
+        ($v:expr) => {{
+            [
+                (($v & 0xFFFFFFFF00000000) >> 32) as u32,
+                 ($v & 0x00000000FFFFFFFF) as u32,
+            ]
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! unpack64x4 {
+        ($v:expr) => {{
+            [
+                (($v & 0xFFFF000000000000) >> 48) as u16,
+                (($v & 0x0000FFFF00000000) >> 32) as u16,
+                (($v & 0x00000000FFFF0000) >> 16) as u16,
+                 ($v & 0x000000000000FFFF) as u16,
+            ]
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! unpack64x8 {
+        ($v:expr) => {{
+            [
+                (($v & 0xFF00000000000000) >> 56) as u8,
+                (($v & 0x00FF000000000000) >> 48) as u8,
+                (($v & 0x0000FF0000000000) >> 40) as u8,
+                (($v & 0x000000FF00000000) >> 32) as u8,
+                (($v & 0x00000000FF000000) >> 24) as u8,
+                (($v & 0x0000000000FF0000) >> 16) as u8,
+                (($v & 0x000000000000FF00) >>  8) as u8,
+                 ($v & 0x00000000000000FF) as u8,
+            ]
+        }};
+    }
+
     pub mod draw {
-        use crate::core::math::{Vec2, vec2, Rect};
-        use crate::core::color::Color;
-        use crate::core::draw::{DrawOp, Vertex, UniformBlock, Texture, prefabs::{Vertex4fx2, Sampler2d}};
-        use crate::auxil::draw::text::{CharDrawInfo, FontDrawInfo, TextStyle, TextDirection};
-        use std::sync::Arc;
+        use crate::core::math::Vec2;
+        use crate::core::draw::{DrawOp, Vertex};
 
-        pub mod text {
-            use crate::core::math::{Vec2, Rect};
-            use crate::core::color::Color;
+        pub mod macros {
 
-            /// [`CharDrawInfo`] all info required to draw a rasterized char.
-            #[derive(Debug, Clone, Copy)]
-            pub struct CharDrawInfo {
-                /// `px_region` is the texture rectangular region (in pixels) where this char is located.
-                pub px_region: Rect,
-                /// `px_advance` is the horizontal advance (in pixels) for this character.
-                pub px_advance: f32,
+            macro_rules! push_quad6v {
+                ($vertices:ident, $ndc_rect:expr) => {{
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.t(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.b(), 0.0, 0.0]));
+                }};
+                ($vertices:ident, $ndc_rect:expr, $ntc_rect:expr) => {{
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.t(), $ntc_rect.l(), $ntc_rect.t()]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.b(), $ntc_rect.r(), $ntc_rect.b()]));
+                }};
+                ($vertices:ident, $ndc_rect:expr, $ntc_rect:expr, $rgba:expr) => {{
+                    $vertices.push(Vertex4fx2([[$ndc_rect.l(), $ndc_rect.t(), $ntc_rect.l(), $ntc_rect.t()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.r(), $ndc_rect.b(), $ntc_rect.r(), $ntc_rect.b()], $rgba]));
+                }};
             }
 
-            /// [`FontDrawInfo`] all info required to draw text.
-            pub trait FontDrawInfo {
-
-                /// texture_size is needed to convert from pixels to normalized texture coords.
-                fn texture_size(&self) -> Vec2;
-
-                /// monospace fonts advance of a fixed amount (no matter the char pair).
-                fn px_monospace_advance(&self) -> Option<f32> { None }
-                /// proportional fonts advance of a variable amount read from a `kern_table[pre_char][cur_char]` (in addition to the width of the character).
-                #[allow(unused_variables)]
-                fn px_kern(&self, pre_char: char, cur_char: char) -> f32 { 0.0 }
-
-                /// `CharDrawInfo` contains all the info required to draw a char (in particular its `px_region` in the texture and its `px_advance`). 
-                fn get_char_draw_info_or_fallback(&mut self, ch: char) -> CharDrawInfo;
-
+            macro_rules! push_quad4v {
+                ($vertices:ident, $ndc_rect:expr) => {{
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.t(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), 0.0, 0.0]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.b(), 0.0, 0.0]));
+                }};
+                ($vertices:ident, $ndc_rect:expr, $ntc_rect:expr) => {{
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.t(), $ntc_rect.l(), $ntc_rect.t()]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()]));
+                    $vertices.push(Vertex4f([$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()]));
+                    $vertices.push(Vertex4f([$ndc_rect.r(), $ndc_rect.b(), $ntc_rect.r(), $ntc_rect.b()]));
+                }};
+                ($vertices:ident, $ndc_rect:expr, $ntc_rect:expr, $rgba:expr) => {{
+                    $vertices.push(Vertex4fx2([[$ndc_rect.l(), $ndc_rect.t(), $ntc_rect.l(), $ntc_rect.t()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.r(), $ndc_rect.t(), $ntc_rect.r(), $ntc_rect.t()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.l(), $ndc_rect.b(), $ntc_rect.l(), $ntc_rect.b()], $rgba]));
+                    $vertices.push(Vertex4fx2([[$ndc_rect.r(), $ndc_rect.b(), $ntc_rect.r(), $ntc_rect.b()], $rgba]));
+                }};
             }
 
-            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-            pub enum TextDirection {
-                /// Left to Right.
-                LTR,
-                /// Right to Left.
-                RTL,
+            macro_rules! push_quad4i {
+                // assumes TriangleList primitive
+                ($indices:ident, $vertex_index:expr) => {{
+                    let vtx = $vertex_index as u16;
+                
+                    $indices.push(vtx); $indices.push(vtx + 1); $indices.push(vtx + 2);
+                    $indices.push(vtx + 1); $indices.push(vtx + 2); $indices.push(vtx + 3);
+                }};
             }
 
-            impl Default for TextDirection {
-                fn default() -> Self {
-                    Self::LTR
-                }
+            macro_rules! push_quad4vi {
+                ($vertices:ident, $indices:ident, $ndc_rect:expr) => {{
+                    push_quad4i!($indices, $vertices.len());
+                    push_quad4v!($vertices, $ndc_rect);
+                }};
+                ($vertices:ident, $indices:ident, $ndc_rect:expr, $ntc_rect:expr) => {{
+                    push_quad4i!($indices, $vertices.len());
+                    push_quad4v!($vertices, $ndc_rect, $ntc_rect);
+                }};
+                ($vertices:ident, $indices:ident, $ndc_rect:expr, $ntc_rect:expr, $rgba:expr) => {{
+                    push_quad4i!($indices, $vertices.len());
+                    push_quad4v!($vertices, $ndc_rect, $ntc_rect, $rgba);
+                }};
             }
 
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            pub struct TextStyle {
-                pub px_dest: Vec2,
-                pub color: Color,
-                pub direction: TextDirection,
-                // scale, rotation, effects (bold, italic, underline, outline, glow)?
-            }
-
-            impl Default for TextStyle {
-                fn default() -> Self {
-                    Self {
-                        px_dest: Vec2::ZERO,
-                        color: Color::WHITE,
-                        direction: Default::default(),
-                    }
-                }
-            }
-
-            // Monospace
-
-            // (l2r: POS_X) ndc_rect l = dest.x + (fixed_advance.x - size.x) / 2
-            // (r2l: NEG_X) ndc_rect l = dest.x - fixed_advance.x + (fixed_advance.x - size.x) / 2
-            // (t2b: POS_Y) ndc_rect t = dest.y + (fixed_advance.y - size.y) / 2
-            // (b2t: NEG_Y) ndc_rect t = dest.y - fixed_advance.y + (fixed_advance.y - size.y) / 2
-            // (lt2rb: ONE) ndc_rect lt = dest + (fixed_advance - size) / 2
-            // (rb2lt:-ONE) ndc_rect lt = dest - fixed_advance + (fixed_advance - size) / 2
-
-            // (step: Vec2)
-            // if step.x > 0.0 { step.x -= 1.0 };
-            // if step.y > 0.0 { step.y -= 1.0 };
-            // INCORRECT WIP!!!
-            // let ndc_rect = Rect::from_xy_wh(
-            //  dest + step * fixed_advance + step.signum() * (fixed_advance - size) / 2,
-            //  size,
-            // );
-            
-            // Proportional
-            // 
-
+            pub(crate) use {
+                push_quad6v,
+                push_quad4v,
+                push_quad4i,
+                push_quad4vi,
+            };
         }
 
-        /// [`Stream2d`] opinionistic attempt at batched primitive drawing.
-        pub struct Stream2d {
+        /// [`Stream<V>`] opinionistic attempt at batched primitive drawing.
+        pub struct Stream<V> {
             /// `draw_op` to be issued (contains the pipeline spec, the gpu buffers and textures).
             /// Most functions assume the draw_op's bound texture to have a white pixel at the very topleft (except when tex coords are provided directly).
             pub draw_op: DrawOp,
-            /// `vertices` is a `Vec<Vertex4fx2>` whose internal layout is interpreted as `[[x, y, u, v], [r, g, b, a]]`.
-            pub vertices: Vec<Vertex4fx2>,
+            /// `vertices` is a `Vec<V>`
+            pub vertices: Vec<V>,
             /// `indices` is a `Vec<u16>`.
             pub indices: Vec<u16>,
             /// `viewport` pixel size to handle conversion from/to normalized device coordinates. 
             pub viewport_size: Vec2,
             /// `is_indexed` drawing mode.
             pub is_indexed: bool,
-            /// `font` to draw text.
-            pub font: Option<Box<dyn FontDrawInfo>>,
         }
 
-        impl Stream2d {
+        impl<V: Vertex> Stream<V> {
 
             pub fn new(draw_op: DrawOp) -> Self {
-                debug_assert_eq!(draw_op.shader.uniform_bind_group_layout_entries, Sampler2d::UNIFORM_BIND_GROUP_LAYOUT_ENTRIES, "shader must support a Sampler2d UniformBlock");
-                debug_assert_eq!(draw_op.shader.texture_bind_group_layout_entries, Sampler2d::TEXTURE_BIND_GROUP_LAYOUT_ENTRIES, "shader must support a Sampler2d UniformBlock");
-                debug_assert_eq!(draw_op.shader.vertex_buffer_layout, &Vertex4fx2::BUFFER_LAYOUT, "shader must support a Vertex4fx2 Vertex!");
-
                 Self {
                     draw_op,
                     vertices: Vec::new(),  // with_capacity(u16::MAX as usize) worth it? roughly 3 MB
                     indices: Vec::new(),
                     viewport_size: Vec2::ZERO,
                     is_indexed: false,
-                    font: None,
                 }
             }
 
             pub fn indexed(draw_op: DrawOp) -> Self {
-                let mut pen = Self::new(draw_op);
-                pen.is_indexed = true;
-                pen
+                let mut s = Self::new(draw_op);
+                s.is_indexed = true;
+                s
             } 
 
             /// clears the buffered vertices and indices. The gpu buffers, stored in the `DrawOp` are not cleared
-            /// (they get updated only when binding, overwriting the relevant data portion, no smart caching atm!).
+            /// (they get updated only when binding and they overwrite the gpu data only up to their len).
             pub fn clear(&mut self) {
                 self.vertices.clear();
                 self.indices.clear();
             }
 
-            /// bind the current vertices and indices to the internal `DrawOp` updating the internal gpu buffers.
-            pub fn bind_to_draw_op(&mut self) {
+            /// upload the current vertices and indices to the internal `DrawOp`'s gpu buffers.
+            pub fn update_draw_op_buffers(&mut self) {
                 self.draw_op.bind_vertices(&self.vertices);
 
                 if self.indices.len() > 0 {
@@ -2145,363 +2347,807 @@ pub mod auxil {
                 }
             }
 
-            /// bind the given font to this stream2d and the associated font atlas texture to the internal draw_op.
-            pub fn bind_font<U: UniformBlock>(&mut self, font: Box<dyn FontDrawInfo>, uniforms: Option<&[U]>, textures: &[Arc<Texture>]) -> Option<Box<dyn FontDrawInfo>> {
-                self.draw_op.bind_uniforms::<U>(uniforms, Some(textures));
-                std::mem::replace(&mut self.font, Some(font))
+        }
+        
+        pub mod text {
+            use serde::{Serialize, Deserialize};
+            use crate::core::math::{Vec2, vec2, Rect};
+            use crate::core::color::Color;
+            use crate::core::draw::{Texture, load_bitmap, save_bitmap, bpp_to_wgpu_texture_format};
+            use crate::core::draw::text::{FontDrawInfo, CharDrawInfo};
+            use crate::backend::Gpu;
+            use std::collections::HashMap;
+            use std::ops::RangeInclusive;
+            use std::sync::Arc;
+
+            #[derive(Debug, Clone)]
+            pub struct CharLayoutInfo { 
+                pub ndc_rect: Rect,
+                pub ntc_rect: Rect,
             }
 
-            /// draw a rect by providing a destination `px_rect` (in pixels) and a per-vertex `color` (e.g. fill).
-            #[inline]
-            pub fn fill_rect(&mut self, px_rect: Rect, color: Color) {
-                self.fill_texture_nc(px_rect.ndc(self.viewport_size), Rect::ZERO, color);
+            impl CharLayoutInfo {
+                pub const ZERO: Self = Self { ndc_rect: Rect::ZERO, ntc_rect: Rect::ZERO };
             }
 
-            /// draw a texture by providing a destination `ndc_rect` (in normalized device coordinates), a texture
-            /// `ntc_rect` to sample from (in normalized texture coordinates) and a per-vertex `color` (e.g. blend rgba mul).
-            #[inline]
-            pub fn fill_texture_nc(&mut self, ndc_rect: Rect, ntc_rect: Rect, color: Color) {
-                let rgba = color.into();
+            impl Default for CharLayoutInfo {
+                fn default() -> Self { Self::ZERO }
+            }
 
-                if self.is_indexed {
-                    let vtx = self.vertices.len() as u16;
-                    let vertices = &mut self.vertices;
-                    let indices = &mut self.indices;
+            #[derive(Debug, Clone, Copy, PartialEq)]
+            pub struct LineStyle {
+                pub px_thick: f32,
+                pub color: Option<Color>,
+                pub offset_factor: f32,
+            }
 
-                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.t(), ntc_rect.l(), ntc_rect.t()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.b(), ntc_rect.r(), ntc_rect.b()], rgba]));
+            impl Eq for LineStyle {}
 
-                    indices.push(vtx); indices.push(vtx + 1); indices.push(vtx + 2);
-                    indices.push(vtx + 1); indices.push(vtx + 2); indices.push(vtx + 3);
-                } else {
-                    let vertices = &mut self.vertices;
-                    debug_assert!(self.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub struct Underline(pub LineStyle);
 
-                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.t(), ntc_rect.l(), ntc_rect.t()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], rgba]));
-                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.b(), ntc_rect.r(), ntc_rect.b()], rgba]));
+            impl Underline {
+                pub const NONE: Self = Self(LineStyle { px_thick: 0.0, color: None, offset_factor: 0.0 });
+                pub const THICK1: Self = Self(LineStyle { px_thick: 1.0, color: None, offset_factor: 0.0 });
+                pub const THICK2: Self = Self(LineStyle { px_thick: 2.0, color: None, offset_factor: 0.0 }); 
+                pub const THICK3: Self = Self(LineStyle { px_thick: 3.0, color: None, offset_factor: 0.0 }); 
+                pub const THICK4: Self = Self(LineStyle { px_thick: 4.0, color: None, offset_factor: 0.0 });
+
+                pub fn thick(mut self, px_thick: f32) -> Self {
+                    self.0.px_thick = px_thick;
+                    self
+                }
+
+                pub fn color_auto(mut self) -> Self {
+                    self.0.color = None;
+                    self
+                }
+
+                pub fn color(mut self, color: Color) -> Self {
+                    self.0.color = Some(color);
+                    self
+                }
+
+                pub fn offset(mut self, factor: f32) -> Self {
+                    self.0.offset_factor = factor;
+                    self
                 }
             }
 
-            /// draw a sequence of characters by providing the text `content_str` and `style`.
-            #[inline]
-            pub fn push_text(&mut self, content_str: &str, style: &TextStyle) {
-                if let Some(mut font) = std::mem::take(&mut self.font) {
-                    // assumes draw_op bound texture is a font atlas texture with metadata as described by this font!!!
-                    let px_dest = style.px_dest;
+            impl Default for Underline {
+                fn default() -> Self { Self::NONE }
+            }
 
-                    let tex_size = font.texture_size();
-                    let rec_tex_size = 1.0 / tex_size;
-                    let vp_size = self.viewport_size;
-                    let rec_vp_size_neg_y = Vec2::INVERT_Y / vp_size;
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub struct Strikethrough(pub LineStyle);
+            
+            impl Strikethrough {
+                pub const NONE: Self = Self(LineStyle { px_thick: 0.0, color: None, offset_factor: 0.43 });
+                pub const THICK1: Self = Self(LineStyle { px_thick: 1.0, color: None, offset_factor: 0.43 });
+                pub const THICK2: Self = Self(LineStyle { px_thick: 2.0, color: None, offset_factor: 0.43 }); 
+                pub const THICK3: Self = Self(LineStyle { px_thick: 3.0, color: None, offset_factor: 0.43 }); 
+                pub const THICK4: Self = Self(LineStyle { px_thick: 4.0, color: None, offset_factor: 0.43 });
 
-                    let mut ndc_dest = 2.0 * (px_dest - vp_size * 0.5) * rec_vp_size_neg_y;
-    
-                    if let Some(px_fixed_advance) = font.px_monospace_advance() {
-                        let ndc_fixed_advance = px_fixed_advance * rec_vp_size_neg_y.x;
-                        let ndc_fixed_advance_signed: f32 = match style.direction {
-                            TextDirection::LTR => ndc_fixed_advance,
-                            TextDirection::RTL => {
-                                ndc_dest.x -= ndc_fixed_advance;
-                                -ndc_fixed_advance
-                            }
-                        };
-    
-                        for ch in content_str.chars() {
-                            let CharDrawInfo { px_region: ch_px_rect, px_advance: _ } = font.get_char_draw_info_or_fallback(ch);
-                            let ch_ndc_size = ch_px_rect.size() * rec_vp_size_neg_y;
-                            let ndc_rect = Rect::from_xy_wh(vec2(ndc_dest.x + (ndc_fixed_advance - ch_ndc_size.x) * 0.5, ndc_dest.y), ch_ndc_size);
-                            let ntc_rect = Rect::from_xy_wh(ch_px_rect.xy() * rec_tex_size, ch_px_rect.wh() * rec_tex_size);
-    
-                            self.fill_texture_nc(ndc_rect, ntc_rect, style.color);
-    
-                            ndc_dest.x += ndc_fixed_advance_signed;
-                        }
+                pub fn thick(mut self, px_thick: f32) -> Self {
+                    self.0.px_thick = px_thick;
+                    self
+                }
+
+                pub fn color_auto(mut self) -> Self {
+                    self.0.color = None;
+                    self
+                }
+
+                pub fn color(mut self, color: Color) -> Self {
+                    self.0.color = Some(color);
+                    self
+                }
+
+                pub fn offset(mut self, factor: f32) -> Self {
+                    self.0.offset_factor = factor;
+                    self
+                }
+            }
+
+            impl Default for Strikethrough {
+                fn default() -> Self { Self::NONE }
+            }
+
+            #[derive(Debug, Clone, Copy, PartialEq)]
+            pub struct Outline {
+                /// outline thickness (in pixels)
+                pub px_thick: f32,
+                /// color gradient (start: outline color, end: fade background color)
+                pub colors: [Option<Color>; 2],
+            }
+
+            impl Eq for Outline {}
+
+            impl Outline {
+                pub const NONE: Self = Self { px_thick: 0.0, colors: [None, Some(Color::TRANSPARENT)] };
+                pub const THICK1: Self = Self { px_thick: 1.0, colors: [None, Some(Color::TRANSPARENT)] };
+                pub const THICK2: Self = Self { px_thick: 2.0, colors: [None, Some(Color::TRANSPARENT)] }; 
+                pub const THICK3: Self = Self { px_thick: 3.0, colors: [None, Some(Color::TRANSPARENT)] }; 
+                pub const THICK4: Self = Self { px_thick: 4.0, colors: [None, Some(Color::TRANSPARENT)] };
+
+                pub fn thick(mut self, px_thick: f32) -> Self {
+                    self.px_thick = px_thick;
+                    self
+                }
+
+                pub fn color_auto(mut self) -> Self {
+                    self.colors[0] = None;
+                    self.colors[1] = Some(Color::TRANSPARENT);
+                    self
+                }
+
+                pub fn color_grad(mut self, color_start: Color, color_end: Color) -> Self {
+                    self.colors[0] = Some(color_start);
+                    self.colors[1] = Some(color_end);
+                    self
+                }
+            }
+
+            impl Default for Outline {
+                fn default() -> Self { Self::NONE }
+            }
+
+            #[derive(Debug, Clone)]
+            pub struct DrawTextArgs {
+                pub px_dest: Vec2,
+                pub scale: Vec2,
+                pub font_color: Color,
+                pub font_style: u64,
+                pub underline: Underline,
+                pub strikethrough: Strikethrough,
+                pub outline: Outline,
+                pub advance_direction: f32,
+            }
+
+            impl DrawTextArgs {
+
+                #[inline]
+                pub fn set_left_to_right(&mut self) -> &mut Self {
+                    self.advance_direction = 1.0;
+                    self
+                }
+
+                #[inline]
+                pub fn set_right_to_left(&mut self) -> &mut Self {
+                    self.advance_direction = -1.0;
+                    self
+                }
+
+                #[inline]
+                pub fn get_underline_line_style(&self) -> Option<LineStyle> {
+                    if self.underline.0.px_thick > 0.0 {
+                        Some(self.underline.0)
                     } else {
-                        if let TextDirection::RTL = style.direction {
-                            todo!("not implemented yet!");
-                        }
-
-                        let mut pre_ch = ' ';
-    
-                        for ch in content_str.chars() {
-                            let CharDrawInfo { px_region: ch_px_rect, px_advance } = font.get_char_draw_info_or_fallback(ch);
-                            let px_kern = font.px_kern(pre_ch, ch);
-                            
-                            ndc_dest.x += px_kern * rec_vp_size_neg_y.x;
-    
-                            if ch_px_rect.area() > 0.0 {  // if not space, tab or alike
-                                let ch_ndc_size = ch_px_rect.size() * rec_vp_size_neg_y;
-                                let ndc_rect = Rect::from_xy_wh(ndc_dest, ch_ndc_size);
-                                let ntc_rect = Rect::from_xy_wh(ch_px_rect.xy() * rec_tex_size, ch_px_rect.wh() * rec_tex_size);
-    
-                                self.fill_texture_nc(ndc_rect, ntc_rect, style.color);
-                            }
-    
-                            ndc_dest.x += px_advance * rec_vp_size_neg_y.x;
-                            pre_ch = ch;
-                        }
+                        None
                     }
-                
-                    self.font = Some(font);
-                } else {
-                    eprintln!("Font not bound!");
+                }
+
+                #[inline]
+                pub fn get_strikethrough_line_style(&self) -> Option<LineStyle> {
+                    if self.strikethrough.0.px_thick > 0.0 {
+                        Some(self.strikethrough.0)
+                    } else {
+                        None
+                    }
+                }
+
+                #[inline]
+                pub fn get_outline(&self) -> Option<Outline> {
+                    if self.outline.px_thick > 0.0 {
+                        Some(self.outline)
+                    } else {
+                        None
+                    }
+                }
+
+            }
+
+            impl Default for DrawTextArgs {
+                fn default() -> Self {
+                    Self {
+                        px_dest: Vec2::ZERO,
+                        scale: Vec2::ONE,
+                        font_color: Color::WHITE,
+                        font_style: Default::default(),
+                        underline: Default::default(),
+                        strikethrough: Default::default(),
+                        outline: Default::default(),
+                        advance_direction: 1.0,
+                    }
                 }
             }
 
-        }
+            pub type UnicodeRange = RangeInclusive<char>;
 
-    }
+            /// [`CharacterSet`]
+            pub struct CharacterSet;
 
-    pub mod font {
-        use crate::backend::Gpu;
-        use crate::core::math::{Vec2, Rect};
-        use crate::core::draw::Texture;
-        use crate::auxil::draw::text::{CharDrawInfo, FontDrawInfo};
-        use ab_glyph::{Font as abFont, ScaleFont as abScaleFont};
-        use std::collections::HashMap;
-        use std::sync::Arc;
+            impl CharacterSet {
+                pub const ASCII: &'static [UnicodeRange] = &['\u{0000}' ..= '\u{00FF}'];
+                // TODO: Add Latin, Cyrillic, Greek, etc.
 
-        #[derive(Debug, Clone)]
-        pub struct GlyphInfo {
-            pub ab_id: ab_glyph::GlyphId,
-            pub px_region: Rect,
-            pub px_advance: f32,
-        }
-
-        impl From<&GlyphInfo> for CharDrawInfo {
-            fn from(item: &GlyphInfo) -> Self {
-                Self {
-                    px_region: item.px_region.into(),
-                    px_advance: item.px_advance as _,
+                pub fn sum_len(unicode_ranges: &[UnicodeRange]) -> usize {
+                    unicode_ranges
+                        .iter()
+                        .cloned()
+                        .map(|r| *r.end() as u32 + 1 - *r.start() as u32)
+                        .sum::<u32>() as _
                 }
+
             }
-        }
 
-        impl From<GlyphInfo> for CharDrawInfo {
-            fn from(item: GlyphInfo) -> Self {
-                Self {
-                    px_region: item.px_region.into(),
-                    px_advance: item.px_advance as _,
-                }
+            #[derive(Debug, Clone, Serialize, Deserialize)]
+            pub struct FontAtlasGrid {
+                pub num_slots: Vec2,
+                pub px_slot_size: Vec2,
+                pub px_offset: Vec2,
+                pub px_gap: Vec2,
             }
-        }
 
-        pub struct FontAtlas {
-            pub gpu: Arc<Gpu>,
-            pub texture: Arc<Texture>,
-            pub texture_data: Vec<u8>,
-            pub texture_size: Vec2,
-            pub map_char_info: HashMap<char, GlyphInfo>,
-            pub px_scale: usize,
-            pub cursor: (usize, usize),
-            // pub dirty: bool,  // or even tracking the dirty areas directly for partial updates
-            // most of the API for online rasterization is missing
-            // COMPLEX USE CASES: multiple languages from multiple ab_fonts not necessarily all with the same scale (latin, chinese, arabic (rtl!), emojis)
-            // potentially overflow mega-texture 8192x8192 (hardware limit) -> variable size allocator with LRU cache on a char render basis (but upstream data needed...))
-        }
-
-        impl FontAtlas {
-
-            pub const BPP: u8 = 1;  // Bytes Per Pixel (equals number of channels for canonical u8 channels).
-            pub const HOR_PADDING: u8 = 1;  // Horizontal padding between glyphs bounding box in the same row.
-            pub const VER_PADDING: u8 = 1;  // Vertical padding between glyphs bounding box in consecutive rows. 
-            pub const MAX_TEXTURE_DIM: u16 = 8192;  // Hardware texture dimension limit (relevant only for gpu textures).
-    
-            #[inline]
-            pub fn stride(&self) -> usize {
-                self.texture_size.x as usize * Self::BPP as usize
+            impl FontAtlasGrid {
+                pub const ZERO: Self = Self {
+                    num_slots: Vec2::ZERO,
+                    px_slot_size: Vec2::ZERO,
+                    px_offset: Vec2::ZERO,
+                    px_gap: Vec2::ZERO,
+                };
             }
-    
-            pub fn new<F: abFont>(gpu: Arc<Gpu>, ab_font: &F, px_scale: usize, chars: &[char]) -> Self {
-                let scale = px_scale as f32;
-                let ab_font_s = ab_font.as_scaled(scale);
-                let ver_ascent = ab_font_s.ascent();
 
-                let est_h = (scale + scale - ver_ascent).ceil();  // single glyph max height
-                let tex_w = Self::MAX_TEXTURE_DIM as usize;
-                let est_rows = (chars.len() as f32 / (tex_w as f32 / est_h)).ceil() as usize;  // using glyph max height (higher than width for glyphs) as proxy for max width (since we want upper bound anyways)
-                let tex_h = (est_rows + 1) * (est_h as usize + Self::VER_PADDING as usize);  // height upper bound
+            #[derive(Debug, Clone, Serialize, Deserialize)]
+            pub struct FontMetadata {
+                pub px_scale: f32,
+                pub px_ascent: f32,
+            }
 
-                let num_channels = Self::BPP as usize;
-                let stride = tex_w * num_channels;
+            #[derive(Clone, Serialize, Deserialize)]
+            pub struct FontAtlasMetadata {
+                pub grid: FontAtlasGrid,
+                pub map_font_meta: HashMap<u64, FontMetadata>,
+                pub map_char_kern: HashMap<(char, char, u64), f32>,
+                pub map_char_info: HashMap<(char, u64), CharDrawInfo>,
+                pub px_monospace_advance: Option<f32>,
+            }
 
-                let mut texture_data = vec![0_u8; tex_h * stride];
-                let mut map_char_info = HashMap::with_capacity(chars.len());
-                let mut max_h_by_row = Vec::with_capacity(est_rows + 1);
-                
-                let mut cur_x = 1;
-                let mut cur_y = 1;
-                let mut cur_i = 0;
-                max_h_by_row.push(0);
-                
-                // Pixel at (0, 0) reserved for white
-                for channel_index in 0 .. num_channels { 
-                    texture_data[channel_index] = 255;
-                }
-                
-                for ch in chars.iter().cloned() {
-                    let glyph_id = ab_font.glyph_id(ch);
-                    let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(0.0, 0.0));
-                    let px_region = if let Some(out) = ab_font.outline_glyph(glyph) {
-                        let bounds = out.px_bounds();
-                        let cur_w = bounds.width().ceil() as usize;
-                        let cur_h = bounds.height().ceil() as usize;
-    
-                        if (cur_x + cur_w) > tex_w {
-                            cur_x = 0;
-                            cur_y += max_h_by_row[cur_i] + Self::VER_PADDING as usize;
-                            cur_i += 1;
-                            max_h_by_row.push(0);
+            /// [`FontAtlas`]
+            pub struct FontAtlas {
+                pub texture: Arc<Texture>,
+                pub texture_data: Vec<u8>,
+                pub grid: FontAtlasGrid, 
+                pub map_font_meta: HashMap<u64, FontMetadata>,
+                pub map_char_kern: HashMap<(char, char, u64), f32>,
+                pub map_char_info: HashMap<(char, u64), CharDrawInfo>,
+                pub px_monospace_advance: Option<f32>,
+            }
+
+            impl FontAtlas {
+
+                pub fn load(gpu: Arc<Gpu>, path: &str) -> Self {
+                    let path_buf: std::path::PathBuf = path.into();
+                    let path_png = path_buf.with_extension("png");
+                    let path_ron = path_buf.with_extension("ron");
+
+                    let (mut texture_data, texture_width, texture_height) = load_bitmap(path_png.to_str().unwrap());
+                    let mut bpp = texture_data.len() / (texture_width * texture_height);
+
+                    if bpp > 1 {
+                        let mut v = Vec::with_capacity(texture_width * texture_height);
+                        for i in (bpp-1 .. texture_data.len()).step_by(bpp) {
+                            v.push(texture_data[i]);
                         }
-    
-                        let ver_align = (ver_ascent + bounds.min.y).round().max(0.0) as usize;
-                        let off_index = (cur_y + ver_align) as usize * stride + cur_x as usize;
+                        bpp = 1;
+                        
+                        texture_data = v;
+                    };
 
-                        out.draw(|x, y, c| {
-                            let index = off_index + y as usize * stride + x as usize;
-                            let value = (c * 255.0) as u8;
-                            
-                            for channel_index in 0 .. num_channels { 
-                                texture_data[index + channel_index] = value;
-                            }
-                        });
-    
-                        let region = Rect::from_ltrb(
-                            cur_x as _,
-                            cur_y as _,
-                            (cur_x + cur_w + 1) as _,
-                            (cur_y + ver_align + cur_h + 1) as _,
+                    // white texel
+                    for i in 0 .. bpp {
+                        texture_data[i] = u8::MAX;
+                    }
+
+                    let format = bpp_to_wgpu_texture_format(bpp);
+                    let texture = Arc::new(Texture::from_bytes(gpu, &texture_data, bpp, texture_width, texture_height, format, wgpu::AddressMode::ClampToEdge, wgpu::FilterMode::Linear));
+
+                    let font_atlas_meta_ron = std::fs::read_to_string(path_ron.to_str().unwrap())
+                        .expect("could not load FontAtlas metadata!");
+                    let FontAtlasMetadata { grid, map_font_meta, map_char_kern, map_char_info, px_monospace_advance } = ron::de::from_str(&font_atlas_meta_ron)
+                        .expect("could not deserialize FontAtlas metadata!");
+
+                    Self {
+                        texture,
+                        texture_data,
+                        grid,
+                        map_font_meta,
+                        map_char_kern,
+                        map_char_info,
+                        px_monospace_advance,
+                    }
+                }
+
+                pub fn save(&self, path: &str) {
+                    let path_buf: std::path::PathBuf = path.into();
+                    let path_png = path_buf.with_extension("png");
+                    let path_ron = path_buf.with_extension("ron");
+
+                    let font_atlas_meta = FontAtlasMetadata {
+                        grid: self.grid.clone(),
+                        map_font_meta: self.map_font_meta.clone(),
+                        map_char_kern: self.map_char_kern.clone(),
+                        map_char_info: self.map_char_info.clone(),
+                        px_monospace_advance: self.px_monospace_advance.clone(),
+                    };
+                    let pretty_config = ron::ser::PrettyConfig::new()
+                        .depth_limit(2)
+                        .separate_tuple_members(true);
+
+                    let font_atlas_meta_ron = ron::ser::to_string_pretty(&font_atlas_meta, pretty_config)
+                        .expect("could not serialize FontAtlas metadata!");
+
+                    save_bitmap(path_png.to_str().unwrap(), &self.texture_data, self.texture.width() as _, self.texture.height() as _);
+                    std::fs::write(path_ron.to_str().unwrap(), font_atlas_meta_ron)
+                        .expect("could not save FontAtlas metadata!");                    
+                }
+
+            }
+
+            impl FontDrawInfo for FontAtlas {
+
+                #[inline]
+                fn texture_size(&self) -> Vec2 {
+                    self.texture.size()   
+                }
+
+                #[inline]
+                fn px_monospace_advance(&self) -> Option<f32> {
+                    self.px_monospace_advance
+                }
+
+                #[inline]
+                fn px_kern(&self, pre_chr: char, cur_chr: char, bits: u64) -> f32 {
+                    *self.map_char_kern.get(&(pre_chr, cur_chr, bits)).unwrap_or(&0.0)
+                }
+
+                #[inline]
+                fn get_char_draw_info_or_fallback(&mut self, chr: char, bits: u64) -> CharDrawInfo {
+                    if let Some(char_draw_info) = self.map_char_info.get(&(chr, bits)) {
+                        char_draw_info.clone()
+                    } else if let Some(char_draw_info) = self.map_char_info.get(&(char::REPLACEMENT_CHARACTER, bits)) {
+                        char_draw_info.clone()
+                    } else if let Some(char_draw_info) = self.map_char_info.get(&(char::REPLACEMENT_CHARACTER, 0)) {
+                        char_draw_info.clone()
+                    } else if let Some(char_draw_info) = self.map_char_info.get(&(' ', bits)) {
+                        char_draw_info.clone()
+                    } else if let Some(char_draw_info) = self.map_char_info.get(&(' ', 0)) {
+                        char_draw_info.clone()
+                    } else {
+                        panic!("fallback char not present in font atlas!");
+                    }
+                }
+
+            }
+
+            pub fn layout_text_no_wrap(vp_size: Vec2, font_atlas: &mut FontAtlas, text_chars: &mut [(char, CharLayoutInfo)], px_dest: Vec2, scale: Vec2, bits: u64, advance_direction: f32) {
+                debug_assert!(advance_direction.abs() == 1.0);
+                
+                let tex_size = font_atlas.texture_size();
+                let rec_tex_size = 1.0 / tex_size;
+                let rec_vp_size_neg_y = Vec2::INVERT_Y / vp_size;
+                let ndc_sfactor = scale * rec_vp_size_neg_y;
+
+                let mut ndc_dest = 2.0 * (px_dest - vp_size * 0.5) * rec_vp_size_neg_y;
+
+                if let Some(px_fixed_advance) = font_atlas.px_monospace_advance() {
+                    let ndc_fixed_advance = px_fixed_advance * ndc_sfactor.x;
+                    let ndc_fixed_advance_signed = ndc_fixed_advance * advance_direction;
+
+                    if advance_direction < 0.0 {  // quad origin always topleft (even if direction RTL)
+                        ndc_dest.x += ndc_fixed_advance_signed;
+                    }
+
+                    for (chr, chr_layout) in text_chars.iter_mut() {
+                        let cur_chr = *chr;
+                        let CharDrawInfo { px_region: chr_px_rect, px_advance: _ } = font_atlas.get_char_draw_info_or_fallback(cur_chr, bits);
+                        
+                        if chr_px_rect.area() > 0.0 {
+                            let chr_ndc_size = chr_px_rect.size() * ndc_sfactor;
+                            let chr_ntc_size = chr_px_rect.size() * rec_tex_size;
+                            chr_layout.ndc_rect = Rect::from_xy_wh(vec2(ndc_dest.x + (ndc_fixed_advance - chr_ndc_size.x) * 0.5, ndc_dest.y), chr_ndc_size);
+                            chr_layout.ntc_rect = Rect::from_xy_wh(chr_px_rect.xy() * rec_tex_size, chr_ntc_size);
+                        }
+
+                        ndc_dest.x += ndc_fixed_advance_signed;
+                    }
+                } else {
+                    let mut pre_chr = text_chars[0].0;
+                    let ndc_sfactor_advance_signed = ndc_sfactor.x * advance_direction;
+
+                    if advance_direction < 0.0 {
+                        ndc_dest.x += font_atlas.get_char_draw_info_or_fallback(pre_chr, bits).px_advance * ndc_sfactor_advance_signed;
+                    }
+
+                    for (chr, chr_layout) in text_chars.iter_mut() {
+                        let cur_chr = *chr;
+                        let CharDrawInfo { px_region: chr_px_rect, px_advance: chr_px_advance } = font_atlas.get_char_draw_info_or_fallback(cur_chr, bits);
+                        let px_kern = font_atlas.px_kern(pre_chr, cur_chr, bits);
+                        
+                        ndc_dest.x += px_kern * ndc_sfactor_advance_signed;
+
+                        if chr_px_rect.area() > 0.0 {  // skip space, tabs and alike
+                            let chr_ndc_size = chr_px_rect.size() * ndc_sfactor;
+                            let chr_ntc_size = chr_px_rect.size() * rec_tex_size;
+                            chr_layout.ndc_rect = Rect::from_xy_wh(ndc_dest, chr_ndc_size);
+                            chr_layout.ntc_rect = Rect::from_xy_wh(chr_px_rect.xy() * rec_tex_size, chr_ntc_size);
+                        }
+
+                        ndc_dest.x += chr_px_advance * ndc_sfactor_advance_signed;
+                        pre_chr = cur_chr;
+                    }
+                }
+            }
+
+            pub mod ab_glyph_support {
+                use super::*;
+                use ab_glyph::{Font as abFont, ScaleFont as abScaleFont};
+
+                pub fn load_font(path: &str) -> ab_glyph::FontArc {
+                    ab_glyph::FontArc::try_from_vec(std::fs::read(path).unwrap()).unwrap()
+                }
+
+                /// rasterize a given set of characters at the specified atlas index (ix, iy), record related metrics in the atlas, returns the first free atlas index.
+                /// (note: if atlas managing multiple fonts, bits should include some unique id to disambiguate font kern values lookup).
+                pub fn rasterize<F: abFont>(font: F, atlas: &mut FontAtlas, chars: &[char], bits: u64, cursor: &mut Vec2) {
+                    let grid_num_cols = atlas.grid.num_slots.x;
+                    let grid_num_rows = atlas.grid.num_slots.y;
+                    let grid_px_offset = atlas.grid.px_offset;
+                    let grid_px_step = atlas.grid.px_slot_size + atlas.grid.px_gap;
+
+                    let bpp = atlas.texture.bpp();
+                    let stride = (grid_px_offset.x + grid_num_cols * grid_px_step.x) as usize * bpp;
+                    let texture_data = &mut atlas.texture_data;
+
+                    let hack = 4.0;  // TODO: remove this hack (some glyph overflow the given scale != max glyph px height)
+                    let font_px_scale = atlas.grid.px_slot_size.y - hack;
+                    let font_scaled = font.as_scaled(font_px_scale);
+                    let ver_ascent = font_scaled.ascent().ceil();
+
+                    atlas.map_font_meta.insert(bits, FontMetadata {
+                        px_scale: font_px_scale,
+                        px_ascent: ver_ascent + hack,
+                    });
+
+                    atlas.map_char_info.reserve(chars.len());
+                    
+                    let mut kern_chars = atlas.map_char_info
+                        .keys()
+                        .cloned()
+                        .filter_map(|(chr, bits1)| if bits1 == bits { Some(chr) } else { None })
+                        .collect::<Vec<_>>();
+                    
+                    kern_chars.extend(chars);
+
+                    for chr in chars.iter().cloned() {
+                        // fetch glyph
+                        let glyph_id = font.glyph_id(chr);
+                        let glyph = glyph_id.with_scale_and_position(font_px_scale, ab_glyph::point(0.0, 0.0));
+          
+                        // locate and rasterize
+                        let cur_pixel = grid_px_offset + *cursor * grid_px_step;
+
+                        debug_assert!(cursor.x < grid_num_cols && cursor.y < grid_num_rows,
+                            "Atlas texture_data too small ({:?}) to fit all the requested chars (n: {}); cursor ({:?}), cur_pixel ({:?})!",
+                            atlas.grid, chars.len(), cursor, cur_pixel
                         );
 
-                        let cur_h_from_last_row_bottom = ver_align + cur_h + 1;
-                        if cur_h_from_last_row_bottom > max_h_by_row[cur_i] {
-                            max_h_by_row[cur_i] = cur_h_from_last_row_bottom;
+                        let (px_region, re_bits) = {
+                            if let Some(out) = font.outline_glyph(glyph) {
+                                let bounds = out.px_bounds();
+        
+                                let ver_align = (ver_ascent + bounds.min.y).ceil().max(0.0);
+                                let off_index = (cur_pixel.y + ver_align) as usize * stride + cur_pixel.x as usize;
+                                
+                                out.draw(|x, y, c| {
+                                    let index = off_index + y as usize * stride + x as usize;
+                                    let value = (c * 255.0) as u8;
+
+                                    for channel_index in 0 .. bpp { 
+                                        texture_data[index + channel_index * bpp] = value;
+                                    }
+                                });
+        
+                                // next atlas index
+                                if cursor.x + 1.0 < grid_num_cols {
+                                    cursor.x += 1.0;
+                                } else {
+                                    cursor.x = 0.0;
+                                    cursor.y += 1.0;
+                                }
+
+                                (Rect::from_ltrb(cur_pixel.x, cur_pixel.y, cur_pixel.x + bounds.width().ceil() + 1.0, cur_pixel.y + ver_align + bounds.height().ceil() + 1.0), bits)
+                            } else {
+                                (Rect::ZERO, Default::default())
+                            }
+                        };
+                        
+                        // store metadata
+                        atlas.map_char_info.insert((chr, re_bits), CharDrawInfo {
+                            px_region,
+                            px_advance: font_scaled.h_advance(glyph_id).ceil() as _,
+                        });
+
+                        for other_chr in kern_chars.iter().cloned() {
+                            let glyph_id1 = font.glyph_id(other_chr);
+                            let kern01 = font_scaled.kern(glyph_id, glyph_id1);
+                            let kern10 = font_scaled.kern(glyph_id1, glyph_id);
+                            if kern01 != 0.0 { atlas.map_char_kern.insert((chr, other_chr, re_bits), kern01); }
+                            if kern10 != 0.0 { atlas.map_char_kern.insert((other_chr, chr, re_bits), kern10); }
                         }
-    
-                        cur_x += cur_w + 1 + Self::HOR_PADDING as usize;
-    
-                        region
-                    } else {
-                        Rect::ZERO
-                    };
-                    let px_advance = ab_font_s.h_advance(glyph_id).ceil() as _;
-    
-                    map_char_info.insert(ch, GlyphInfo {
-                        ab_id: glyph_id,
-                        px_region,
-                        px_advance,
-                    });
-                }
 
-                let texture = match num_channels {
-                    1 => Texture::from_a8(gpu.clone(), &texture_data, tex_w as _, tex_h as _),
-                    4 => Texture::from_rgba8(gpu.clone(), &texture_data, tex_w as _, tex_h as _),
-                    _ => unimplemented!(),
-                };
-
-                Self {
-                    gpu,
-                    texture: Arc::new(texture),
-                    texture_data,
-                    texture_size: (tex_w as _, tex_h as _).into(),
-                    map_char_info,
-                    px_scale,
-                    cursor: (cur_x as _, cur_y as _).into()
-                }
-            }
-            
-        }
-        
-        pub struct Font {
-            pub ab_font: ab_glyph::FontArc,
-            pub monospace: Option<f32>,
-            pub atlas: FontAtlas,
-            pub char_fallback: char,
-        }
-
-        impl Font {
-
-            pub const DEFAULT_CHAR_FALLBACK: char = '#';
-
-            pub fn load(gpu: Arc<Gpu>, path: &str, monospace: bool) -> Self {
-                let ascii = (32 ..= 126_u8).map(|c| c as char).collect::<Vec<_>>();
-                let bytes = std::fs::read(path).unwrap();
-                let ab_font = ab_glyph::FontArc::try_from_vec(bytes).unwrap();
-    
-                let mut atlas = FontAtlas::new(gpu, &ab_font, 32, &ascii);
-                let space = atlas.map_char_info.get(&' ').unwrap().clone();
-
-                assert!(space.px_region == Rect::ZERO, "space char incorrectly rasterized!");
-
-                atlas.map_char_info.insert('\t', GlyphInfo {
-                    ab_id: ab_font.glyph_id('\t'),
-                    px_region: Rect::ZERO,
-                    px_advance: space.px_advance * 4.0,
-                });
-
-                let char_fallback = Self::DEFAULT_CHAR_FALLBACK;
-                if atlas.map_char_info.get(&char_fallback).is_none() {
-                    todo!("atlas.rasterize(char_fallback)");
-                }
-
-                let monospace_adv = if monospace {
-                    Some(space.px_advance)
-                } else {
-                    None
-                };
-
-                Self {
-                    ab_font,
-                    atlas,
-                    monospace: monospace_adv,
-                    char_fallback,
-                }
-            }
-        
-        }
-
-        impl FontDrawInfo for Font {
-
-            #[inline]
-            fn px_monospace_advance(&self) -> Option<f32> {
-                self.monospace
-            }
-
-            #[inline]
-            fn px_kern(&self, pre_char: char, cur_char: char) -> f32 {
-                if let Some(pre) = self.atlas.map_char_info.get(&pre_char) {
-                    if let Some(cur) = self.atlas.map_char_info.get(&cur_char) {
-                        return self.ab_font
-                            .as_scaled(self.atlas.px_scale as f32)
-                            .kern(pre.ab_id, cur.ab_id)
                     }
                 }
 
-                0.0
-            }
+                pub fn make_font_atlas(gpu: Arc<Gpu>, fonts: &[(ab_glyph::FontArc, u64, &[UnicodeRange])]) -> FontAtlas {
+                    let mut num_chars = 0;
+                    let mut max_chars = 0;
 
-            #[inline]
-            fn texture_size(&self) -> Vec2 {
-                self.atlas.texture_size
-            }
+                    for (_, _, unicode_ranges) in fonts.iter() {
+                        let n = CharacterSet::sum_len(*unicode_ranges);
+                        num_chars += n;
 
-            #[inline]
-            fn get_char_draw_info_or_fallback(&mut self, ch: char) -> CharDrawInfo {
-                match self.atlas.map_char_info.get(&ch) {
-                    Some(char_info) => char_info.into(),
-                    None => self.atlas.map_char_info.get(&self.char_fallback).unwrap().into(),
+                        if n > max_chars {
+                            max_chars = n;
+                        }
+                    }
+
+                    let px_offset = vec2(0.0, 1.0);
+                    let px_gap = Vec2::ZERO;
+                    let slot_dim = 32.0;
+                    let texture_width = 8192.0;
+                    let texture_cols = ((texture_width - px_offset.x) / (slot_dim + px_gap.x)).ceil();
+                    let texture_rows = (num_chars as f32 / texture_cols).ceil();
+                    let texture_height = (px_offset.y + texture_rows * (slot_dim + px_gap.y)).min(8192.0);
+                    let texture_bpp = 1;
+                    let texture_data = vec![0; (texture_width * texture_height) as usize * texture_bpp];
+                    let texture = Arc::new(Texture::from_luma8(gpu.clone(), &[u8::MAX], 1, 1));
+
+                    let grid = FontAtlasGrid {
+                        num_slots: vec2(texture_cols as f32, texture_rows as f32),
+                        px_offset,
+                        px_gap,
+                        px_slot_size: vec2(slot_dim as f32, slot_dim as f32),
+                    };
+
+                    let mut atlas = FontAtlas {
+                        texture,
+                        texture_data,
+                        grid,
+                        map_font_meta: Default::default(),
+                        map_char_kern: Default::default(),
+                        map_char_info: Default::default(),
+                        px_monospace_advance: None,
+                    };
+
+                    let mut cursor = Vec2::ZERO;
+
+                    let mut chars = Vec::with_capacity(max_chars);
+
+                    for (font, bits, unicode_ranges) in fonts.iter() {
+                        chars.clear();
+
+                        for unicode_range in unicode_ranges.iter().cloned() {
+                            for codepoint in unicode_range {
+                                chars.push(codepoint);
+                            }
+                        }
+
+                        rasterize(font, &mut atlas, &chars, *bits, &mut cursor);
+                    }
+
+                    debug_assert!(cursor.x > 0.0 || cursor.y > 0.0, "unable to rasterize any character through the provided font!");
+
+                    for i in 0 .. texture_bpp {
+                        atlas.texture_data[i] = u8::MAX;
+                    }
+
+                    atlas.texture = Arc::new(
+                        Texture::from_bytes(
+                            gpu,
+                            &atlas.texture_data,
+                            texture_bpp,
+                            texture_width as _,
+                            texture_height as _,
+                            bpp_to_wgpu_texture_format(texture_bpp),
+                            wgpu::AddressMode::ClampToEdge,
+                            wgpu::FilterMode::Linear
+                        )
+                    );
+
+                    let space = atlas.map_char_info.get(&(' ', Default::default())).unwrap().clone();
+                    let mut px_monospace_advance = Some(space.px_advance);
+                    let space_px_advance = space.px_advance as u32;
+
+                    for ras_char in atlas.map_char_info.values() {
+                        let ras_char_px_advance = ras_char.px_advance.ceil() as u32;
+
+                        if ras_char_px_advance != space_px_advance && ras_char.px_region != Rect::ZERO {
+                            px_monospace_advance = None;
+                            break;
+                        }
+                    }
+
+                    atlas.map_char_info.insert(('\t', Default::default()), CharDrawInfo {
+                        px_region: space.px_region.clone(),
+                        px_advance: space.px_advance * 4.0,
+                    });
+
+                    atlas.px_monospace_advance = px_monospace_advance;
+
+                    atlas
                 }
             }
+
+        }
+
+        /// [`v2d`] opinionistic 2d drawing working on `Stream<Vertex4fx2>` with vertex layout used as `[[x, y, u, v], [r, g, b, a]]` (see e.g. [`MakeShader2d`]), and a bound texture with a white pixel at 0, 0.
+        pub mod v2d {
+            use crate::core::math::{Vec2, vec2, Rect};
+            use crate::core::color::Color;
+            use crate::core::draw::prefabs::Vertex4fx2;
+            use crate::auxil::draw::{Stream, macros::*};
+            use crate::auxil::draw::text::{FontAtlas, DrawTextArgs, CharLayoutInfo, layout_text_no_wrap};
+
+            /// draw a rect by providing a destination `px_rect` (in pixels) and a per-vertex `color` (default Shader2d fill).
+            #[inline]
+            pub fn draw_rect(stream: &mut Stream<Vertex4fx2>, px_rect: Rect, color: Color) {
+                draw_texture_nc(stream, px_rect.ndc(stream.viewport_size), Rect::ZERO, color);
+            }
+
+            /// draw a texture by providing a destination `ndc_rect` (in normalized device coordinates), a texture `ntc_rect` to sample from (in normalized texture coordinates) and a per-vertex `color` (default Shader2d blend rgba mul).
+            #[inline]
+            pub fn draw_texture_nc(stream: &mut Stream<Vertex4fx2>, ndc_rect: Rect, ntc_rect: Rect, color: Color) {
+                let rgba: [f32; 4] = color.into();
+
+                if stream.is_indexed {
+                    let vertices = &mut stream.vertices;
+                    let indices = &mut stream.indices;
+
+                    push_quad4vi!(vertices, indices, ndc_rect, ntc_rect, rgba);
+                } else {
+                    let vertices = &mut stream.vertices;
+                    debug_assert!(stream.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
+
+                    push_quad6v!(vertices, ndc_rect, ntc_rect, rgba);
+                }
+            }
+
+            /// draw (non-sdf) text by providing a `font_atlas`, the str of `text`, a destination `px_dest` (topleft if !rtl else topright), a `scale` factor, `color` and `style` modifiers (compliant with font atlas internal meta font bits format!).
+            #[inline]
+            pub fn draw_text(stream: &mut Stream<Vertex4fx2>, font_atlas: &mut FontAtlas, text: &str, draw_text_args: DrawTextArgs) {
+                if text.len() == 0 {
+                    return;
+                }
+
+                let mut text_chars = text.chars().map(|chr| (chr, Default::default())).collect::<Vec<_>>();
+                
+                layout_text_no_wrap(
+                    stream.viewport_size, font_atlas, &mut text_chars,
+                    draw_text_args.px_dest, draw_text_args.scale, draw_text_args.font_style, draw_text_args.advance_direction);
+
+                let ndc_dest0 = text_chars[0].1.ndc_rect.lt();
+                let ndc_dest1 = text_chars[text_chars.len() - 1].1.ndc_rect.rt();
+
+                for (_, CharLayoutInfo { ndc_rect, ntc_rect }) in text_chars {
+                    draw_texture_nc(stream, ndc_rect, ntc_rect, draw_text_args.font_color);
+                }
+
+                let font_meta = font_atlas.map_font_meta.get(&draw_text_args.font_style).unwrap();
+                let rec_vp_size_neg_y = Vec2::INVERT_Y / stream.viewport_size;
+                let ndc_sfactor = rec_vp_size_neg_y * draw_text_args.scale;
+
+                if let Some(underline) = draw_text_args.get_underline_line_style() {
+                    let shift_to_baseline = vec2(0.0, (font_meta.px_ascent + underline.offset_factor * font_meta.px_scale).round() * ndc_sfactor.y);
+                    let line_thick = vec2(0.0, underline.px_thick * rec_vp_size_neg_y.y);
+                    let ndc_rect = Rect::from_lt_rb(ndc_dest0 + shift_to_baseline, ndc_dest1 + shift_to_baseline + line_thick);
+
+                    draw_texture_nc(stream, ndc_rect, Rect::ZERO, underline.color.unwrap_or(draw_text_args.font_color));
+                }
+
+                if let Some(strikethrough) = draw_text_args.get_strikethrough_line_style() {
+                    let shift_to_midline = vec2(0.0, (font_meta.px_ascent - strikethrough.offset_factor * font_meta.px_scale).round() * ndc_sfactor.y);
+                    let line_thick = vec2(0.0, strikethrough.px_thick * rec_vp_size_neg_y.y);
+                    let ndc_rect = Rect::from_lt_rb(ndc_dest0 + shift_to_midline, ndc_dest1 + shift_to_midline + line_thick);
+
+                    draw_texture_nc(stream, ndc_rect, Rect::ZERO, strikethrough.color.unwrap_or(draw_text_args.font_color));
+                }
+            }
+
+        }
+
+        /// [`vsdf`] opinionistic 2d drawing working on `Stream<Vertex4fx2>` with vertex layout used as `[[x, y, u, v], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]` (see e.g. [`MakeShaderSdf`]), and a bound texture with a white pixel at 0, 0.
+        pub mod vsdf {
+            use crate::core::math::{Vec2, vec2, Rect};
+            use crate::core::color::Color;
+            use crate::core::draw::prefabs::Vertex4fx2;
+            use crate::auxil::draw::{Stream, macros::*};
+            use crate::auxil::draw::text::{FontAtlas, DrawTextArgs, CharLayoutInfo, Outline, layout_text_no_wrap};
+
+            /// draw a texture (respecting implicit sdf vertex layout)
+            #[inline]
+            pub fn draw_texture_nc(stream: &mut Stream<Vertex4fx2>, ndc_rect: Rect, ntc_rect: Rect, color: Color, outline: Outline) {
+                let fg_rgba = { let [r, g, b, a]: [u8; 4] = color.into(); pack32!(r, g, b, a) } as f32;
+                let bg_rgba = { let [r, g, b, a]: [u8; 4] = outline.colors[1].unwrap_or(Color::TRANSPARENT).into(); pack32!(r, g, b, a) } as f32;
+                let bd_rgba = { let [r, g, b, a]: [u8; 4] = outline.colors[0].unwrap_or(color).into(); pack32!(r, g, b, a) } as f32;
+                let bd_thick = outline.px_thick;  // TODO: NDC?
+
+                if stream.is_indexed {
+                    let vertices = &mut stream.vertices;
+                    let indices = &mut stream.indices;
+
+                    push_quad4i!(indices, vertices.len());
+                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.t(), ntc_rect.l(), ntc_rect.t()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.b(), ntc_rect.r(), ntc_rect.b()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                } else {
+                    let vertices = &mut stream.vertices;
+                    debug_assert!(stream.indices.len() == 0, "cannot mix vertex-only with indexed calls!");
+
+                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.t(), ntc_rect.l(), ntc_rect.t()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.t(), ntc_rect.r(), ntc_rect.t()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.l(), ndc_rect.b(), ntc_rect.l(), ntc_rect.b()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                    vertices.push(Vertex4fx2([[ndc_rect.r(), ndc_rect.b(), ntc_rect.r(), ntc_rect.b()], [fg_rgba, bg_rgba, bd_rgba, bd_thick]]));
+                }
+            }
+
+            // draw sdf text
+            #[inline]
+            pub fn draw_text(stream: &mut Stream<Vertex4fx2>, font_atlas: &mut FontAtlas, text: &str, draw_text_args: DrawTextArgs) {
+                if text.len() == 0 {
+                    return;
+                }
+
+                let mut text_chars = text.chars().map(|chr| (chr, Default::default())).collect::<Vec<_>>();
+                
+                layout_text_no_wrap(
+                    stream.viewport_size, font_atlas, &mut text_chars,
+                    draw_text_args.px_dest, draw_text_args.scale, draw_text_args.font_style, draw_text_args.advance_direction);
+
+                let ndc_dest0 = text_chars[0].1.ndc_rect.lt();
+                let ndc_dest1 = text_chars[text_chars.len() - 1].1.ndc_rect.rt();
+
+                for (_, CharLayoutInfo { ndc_rect, ntc_rect }) in text_chars {
+                    draw_texture_nc(stream, ndc_rect, ntc_rect, draw_text_args.font_color, draw_text_args.outline);
+                }
+
+                let font_meta = font_atlas.map_font_meta.get(&draw_text_args.font_style).unwrap();
+                let rec_vp_size_neg_y = Vec2::INVERT_Y / stream.viewport_size;
+                let ndc_sfactor = rec_vp_size_neg_y * draw_text_args.scale;
+
+                if let Some(underline) = draw_text_args.get_underline_line_style() {
+                    let shift_to_baseline = vec2(0.0, (font_meta.px_ascent + underline.offset_factor * font_meta.px_scale).round() * ndc_sfactor.y);
+                    let line_thick = vec2(0.0, underline.px_thick * rec_vp_size_neg_y.y);
+                    let ndc_rect = Rect::from_lt_rb(ndc_dest0 + shift_to_baseline, ndc_dest1 + shift_to_baseline + line_thick);
+
+                    draw_texture_nc(stream, ndc_rect, Rect::ZERO, underline.color.unwrap_or(draw_text_args.font_color), Outline::NONE);
+                }
+
+                if let Some(strikethrough) = draw_text_args.get_strikethrough_line_style() {
+                    let shift_to_midline = vec2(0.0, (font_meta.px_ascent - strikethrough.offset_factor * font_meta.px_scale).round() * ndc_sfactor.y);
+                    let line_thick = vec2(0.0, strikethrough.px_thick * rec_vp_size_neg_y.y);
+                    let ndc_rect = Rect::from_lt_rb(ndc_dest0 + shift_to_midline, ndc_dest1 + shift_to_midline + line_thick);
+
+                    draw_texture_nc(stream, ndc_rect, Rect::ZERO, strikethrough.color.unwrap_or(draw_text_args.font_color), Outline::NONE);
+                }
+            }
+
         }
 
     }
-
 }
 
 
@@ -3522,9 +4168,9 @@ pub mod app {
 
 
 pub mod prelude {
-    pub use crate::core::{math::*, color::*, draw::*, draw::prefabs::*};
-    pub use crate::auxil::{*, draw::*, font::*};
-    pub use crate::backend::{WindowMode, AppConfig};
+    pub use crate::core::{math::*, color::*, draw::{*, prefabs::*, text::*}};
+    pub use crate::auxil::{*, draw::{*, text::*}};
+    pub use crate::backend::{WindowMode, AppConfig, Gpu};
     pub use crate::input::*;
     pub use crate::clock::*;
     pub use crate::app::*;
